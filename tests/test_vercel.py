@@ -148,3 +148,30 @@ def test_dev_server_blocks_path_traversal(tmp_path):
     h.send_header = h.end_headers = lambda *a: None
     h.do_GET()
     assert b"<!doctype html>" in h.wfile.getvalue() and b"SERPAPI" not in h.wfile.getvalue()
+
+
+def test_dashboard_store_works_on_vercel_with_json_credentials(monkeypatch, tmp_path):
+    """Vercel has no key file: GOOGLE_CREDENTIALS_JSON must be enough for every endpoint, not just runs."""
+    import webapi
+    from storage import backend
+    key = json.dumps({"type": "service_account", "client_email": "bot@proj.iam.gserviceaccount.com", "private_key": "k"})
+    for k in ("GOOGLE_CREDENTIALS", "DATABASE_URL", "STORAGE_BACKEND"):
+        monkeypatch.setenv(k, "x")
+        monkeypatch.delenv(k)
+    monkeypatch.setenv("GOOGLE_CREDENTIALS_JSON", key)
+    monkeypatch.setenv("GOOGLE_SHEET_ID", "sheet")
+    monkeypatch.setattr(webapi, "TMP", str(tmp_path))
+    opened = {}
+
+    class FakeClient:
+        def __init__(self, cfg):
+            opened["path"] = cfg.credentials_path
+            self.ws = type("W", (), {"spreadsheet": None})()
+
+        def open(self, **kw):
+            return self
+    monkeypatch.setattr("integrations.google_sheets.SheetsClient", FakeClient)
+    assert not backend.is_pg()
+    webapi.store()
+    path = tmp_path / "credentials.json"
+    assert opened["path"] == path and path.read_text() == key and stat.S_IMODE(path.stat().st_mode) == 0o600

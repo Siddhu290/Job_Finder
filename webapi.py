@@ -127,6 +127,23 @@ def read_json(h, limit=MAX_BODY) -> dict:
     return body if isinstance(body, dict) else {}
 
 
+def ensure_credentials(tmp=None):
+    """On Vercel the Google key arrives as GOOGLE_CREDENTIALS_JSON (env), not a file: write it to /tmp once,
+    readable only by this process, and point GOOGLE_CREDENTIALS at it. No-op locally."""
+    raw = os.environ.get("GOOGLE_CREDENTIALS_JSON")
+    if not raw:
+        return
+    tmp = tmp or TMP
+    path = os.path.join(tmp, "credentials.json")
+    if os.environ.get("GOOGLE_CREDENTIALS") == path and os.path.exists(path):
+        return
+    os.makedirs(tmp, exist_ok=True)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(raw)
+    os.environ["GOOGLE_CREDENTIALS"] = path
+
+
 def prepare_env(tmp=None):
     """Serverless: writable dirs in /tmp, key file from env, cache kept in the sheet, stop before the 300s cap."""
     tmp = tmp or TMP
@@ -134,18 +151,13 @@ def prepare_env(tmp=None):
     os.environ.setdefault("JOB_FINDER_DATA_DIR", tmp)
     os.environ.setdefault("CACHE_IN_SHEET", "1")
     os.environ.setdefault("RUN_TIME_LIMIT", "240")
-    raw = os.environ.get("GOOGLE_CREDENTIALS_JSON")
-    if raw:
-        path = os.path.join(tmp, "credentials.json")
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w") as f:
-            f.write(raw)
-        os.environ["GOOGLE_CREDENTIALS"] = path
+    ensure_credentials(tmp)
 
 
 def store(h=None):
     """The signed-in user's store (Postgres) or the spreadsheet store (single-user)."""
     from storage import backend
+    ensure_credentials()
     return backend.open_store(user_of(h)["id"] if h is not None else None)
 
 
