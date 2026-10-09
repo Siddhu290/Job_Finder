@@ -1,5 +1,6 @@
 """SerpApi client and Google Jobs discovery."""
 import logging
+import threading
 
 import requests
 
@@ -26,12 +27,14 @@ class BudgetExhausted(SerpApiError):
 class SerpApi:
     def __init__(self, api_key: str, max_calls: int):
         self.api_key, self.max_calls, self.calls = api_key, max_calls, 0
+        self._lock = threading.Lock()   # searches run in parallel threads
         http_client.register_secret(api_key)
 
     def search(self, **params) -> dict:
-        if self.calls >= self.max_calls:
-            raise BudgetExhausted(f"SerpApi call budget ({self.max_calls}) used up for this run")
-        self.calls += 1
+        with self._lock:
+            if self.calls >= self.max_calls:
+                raise BudgetExhausted(f"SerpApi call budget ({self.max_calls}) used up for this run")
+            self.calls += 1
         try:
             r = http_client.request_quick("GET", SERPAPI_URL, params={**params, "api_key": self.api_key}, timeout=http_client.QUICK_TIMEOUT)
         except requests.RequestException as e:

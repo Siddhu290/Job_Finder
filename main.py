@@ -9,6 +9,7 @@ import os
 import re
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FuturesTimeout
 import logging.handlers
 import signal
 import sys
@@ -99,23 +100,34 @@ def discover(serp, stats, budget):
         raw += ats_boards.board_jobs(entry, stats)
     p = filters.PROFILE
     limit = float(os.getenv("RUN_TIME_LIMIT", "0") or 0)
-    for q, where, wfh in query_builder.build(p.locations, p.mode, p.roles)[:budget]:  # deduplicated, best first
-        if STOP:
-            break
-        if limit and time.monotonic() - RUN_STARTED > limit * DISCOVERY_SHARE and raw:
-            log.warning("discovery time budget used; verifying what was found so far")
-            break
-        try:
-            found = google_jobs(serp, q, where, wfh)
-            log.info("query %r -> %d results", q, len(found))
-            raw += found
-        except SerpApiAuthError:
-            raise
-        except SerpApiError as e:
-            stats["errors"].append(str(e))
-            log.warning("%s", e)
-            if isinstance(e, BudgetExhausted):
-                break
+    queries = query_builder.build(p.locations, p.mode, p.roles)[:budget]   # deduplicated, best first
+    if STOP or not queries:
+        return raw
+    # Google Jobs via SerpApi takes 10-20 s per query, so they run in parallel (one at a time used up the
+    # time cap after ~5 queries). ponytail: fixed 5 workers; raise if SerpApi plan allows more concurrency.
+    pool = ThreadPoolExecutor(max_workers=5)
+    futs = {pool.submit(google_jobs, serp, q, where, wfh): i for i, (q, where, wfh) in enumerate(queries)}
+    results = {}
+    timeout = max(limit * DISCOVERY_SHARE - (time.monotonic() - RUN_STARTED), 1) if limit else None
+    try:
+        for f in as_completed(futs, timeout=timeout):
+            q = queries[futs[f]][0]
+            try:
+                results[futs[f]] = f.result()
+                log.info("query %r -> %d results", q, len(results[futs[f]]))
+            except SerpApiAuthError:
+                raise
+            except SerpApiError as e:
+                if not isinstance(e, BudgetExhausted):
+                    stats["errors"].append(str(e))
+                    log.warning("%s", e)
+    except FuturesTimeout:
+        log.warning("discovery time budget used; verifying what was found so far (%d of %d searches done)",
+                    len(results), len(queries))
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
+    for i in sorted(results):          # keep best-first query order for dedupe
+        raw += results[i]
     return raw
 
 
