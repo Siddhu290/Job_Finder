@@ -106,7 +106,7 @@ def test_analytics_from_stored_data_only():
 
 def test_application_api_archive_restore(monkeypatch):
     import webapi
-    from api import application
+    from routes import application
     from tests.test_vercel import post
     monkeypatch.setenv("DASHBOARD_PASSWORD", "pw")
     mem = Store(FakeClient())

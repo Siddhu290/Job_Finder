@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 
 import gspread
 
-from api import run as run_api
+from routes import run as run_api
 from tests.test_google_sheets import make_client
 
 
@@ -98,7 +98,7 @@ def test_dashboard_search_validates_and_passes_profile(monkeypatch):
 
 
 def test_actions(monkeypatch):
-    from api import action
+    from routes import action
     import webapi
     monkeypatch.setenv("DASHBOARD_PASSWORD", "pw")
     client = MagicMock()
@@ -128,7 +128,7 @@ def test_actions(monkeypatch):
 
 
 def test_health_reports_presence_not_values(monkeypatch):
-    from api import health
+    from routes import health
     monkeypatch.setenv("SERPAPI_KEY", "supersecret-serp-key")
     monkeypatch.setenv("GOOGLE_SHEET_ID", "sheet")
     monkeypatch.setenv("DASHBOARD_PASSWORD", "pw")
@@ -175,3 +175,24 @@ def test_dashboard_store_works_on_vercel_with_json_credentials(monkeypatch, tmp_
     webapi.store()
     path = tmp_path / "credentials.json"
     assert opened["path"] == path and path.read_text() == key and stat.S_IMODE(path.stat().st_mode) == 0o600
+
+
+def test_single_function_router():
+    """Vercel Hobby allows 12 functions: everything goes through api/index.py."""
+    from api import index
+    assert index.route_name("/api/index?__route=jobs") == "jobs"          # after the vercel.json rewrite
+    assert index.route_name("/api/run?slot=morning") == "run"             # direct path (local / cron)
+    assert index.route_name("/api/index?__route=run&slot=morning") == "run"
+    for name in index.ROUTES:
+        assert hasattr(__import__(f"routes.{name}", fromlist=["handler"]), "handler"), name
+    h = index.handler.__new__(index.handler)
+    sent = {}
+    h.path, h.headers, h.wfile = "/api/index?__route=../../etc/passwd", {}, io.BytesIO()
+    h.send_response = lambda c: sent.setdefault("code", c)
+    h.send_header = h.end_headers = lambda *a: None
+    h.do_GET()
+    assert sent["code"] == 404                                              # only known routes can be loaded
+    h.path, sent = "/api/index?__route=health", {}
+    h.wfile = io.BytesIO()
+    h.do_GET()
+    assert sent["code"] in (200, 503) and b"config" in h.wfile.getvalue()

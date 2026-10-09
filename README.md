@@ -262,8 +262,8 @@ discovery/      Google Jobs, ATS boards, HR search, queries
 verification/   company → careers → ATS link → vacancy match → open status (pipeline.py)
 storage/        store.py (Sheets tabs) · pg.py (Postgres) · backend.py (switch) · deduplication.py
 integrations/   google_sheets.py
-api/            Vercel functions: jobs run action application resume tailor settings analytics
-                login register account serpapi sheet health
+api/index.py    the single Vercel function: routes /api/<name> to routes/<name>.py (Hobby plan: max 12 functions)
+routes/         jobs run action application resume tailor settings analytics login register account serpapi sheet health
 public/         index.html app.css app.js
 prisma/         schema.prisma, migrations/
 scheduler/      setup_schedule.sh (systemd)

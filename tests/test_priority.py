@@ -69,7 +69,7 @@ def _bundle():
 
 
 def test_dashboard_build_ranks_and_never_exposes_unverified_apply():
-    from api.jobs import build
+    from routes.jobs import build
     body = build(_bundle(), TODAY)
     ids = [j["id"] for j in body["jobs"]]
     assert ids[0] == "J2"
@@ -88,7 +88,7 @@ def test_dashboard_build_ranks_and_never_exposes_unverified_apply():
 
 def test_dashboard_api_requires_auth(monkeypatch):
     import webapi
-    from api import jobs as api
+    from routes import jobs as api
     monkeypatch.setenv("DASHBOARD_PASSWORD", "s3cret")
     monkeypatch.setattr(webapi, "store", lambda *a: type("S", (), {"bundle": lambda self, t, j: _bundle()})())
     monkeypatch.setattr("budget.account", lambda key: {"total_searches_left": 190})

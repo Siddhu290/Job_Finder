@@ -16,7 +16,7 @@ class handler(BaseHTTPRequestHandler):
             return webapi.send(self, 401, {"error": "Not signed in"})
         import analytics
         import budget
-        from api.jobs import build
+        from routes.jobs import build
         rng = (parse_qs(urlparse(self.path).query).get("range") or ["30"])[0]
         if rng not in analytics.RANGES:
             return webapi.send(self, 400, {"error": "range must be 7, 30, 90 or all"})

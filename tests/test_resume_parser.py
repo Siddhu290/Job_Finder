@@ -63,7 +63,7 @@ def test_encrypted_pdf_and_zip_bomb_guard(monkeypatch):
 def test_upload_endpoint_returns_text_but_never_stores_it(monkeypatch):
     import llm
     import webapi
-    from api import resume
+    from routes import resume
     from tests.test_resume import MemStore
     from tests.test_vercel import post
     monkeypatch.setenv("DASHBOARD_PASSWORD", "pw")

@@ -25,7 +25,7 @@ class Dev(BaseHTTPRequestHandler):
         name = urlparse(self.path).path.removeprefix("/api/").strip("/")
         if name not in ROUTES:
             return self.send_error(404)
-        fn = getattr(importlib.import_module(f"api.{name}").handler, method, None)
+        fn = getattr(importlib.import_module(f"routes.{name}").handler, method, None)
         return fn(self) if fn else self.send_error(405)
 
     def do_POST(self):

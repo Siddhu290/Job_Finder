@@ -276,14 +276,14 @@ def test_full_run_on_postgres(db, monkeypatch, tmp_path):
 
 # ---------- HTTP endpoints in multi-user mode ----------
 def _login(email, password):
-    from api import login
+    from routes import login
     from tests.test_vercel import post
     return post(login.handler, {"X-Forwarded-For": "10.0.0.%d" % (hash(email) % 200)}, {"email": email, "password": password})
 
 
 def test_endpoints_are_per_user(db, monkeypatch):
     import webapi
-    from api import account, application, register, serpapi, settings as settings_api
+    from routes import account, application, register, serpapi, settings as settings_api
     from tests.test_vercel import call, post
     webapi._hits.clear()
     users(db)
@@ -318,7 +318,7 @@ def test_endpoints_are_per_user(db, monkeypatch):
 
 
 def test_registration_closed_without_invite(db, monkeypatch):
-    from api import register
+    from routes import register
     from tests.test_vercel import post
     monkeypatch.delenv("INVITE_CODE", raising=False)
     assert post(register.handler, {}, {"email": "x@example.com", "password": "long enough pass"})[0] == 403
@@ -353,7 +353,7 @@ def test_each_user_gets_own_tab_and_sync(db, monkeypatch):
     """Tab created at registration; a search syncs only that user's jobs to that user's tab."""
     import sheet_mirror
     import webapi
-    from api import register, sheet
+    from routes import register, sheet
     from storage.pg import PgJobs, PgStore
     from tests.test_vercel import call, post
     created, synced = [], []

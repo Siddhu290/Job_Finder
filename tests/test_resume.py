@@ -76,7 +76,7 @@ class MemStore:
 
 
 def test_resume_api_profiles_lifecycle(monkeypatch):
-    from api import resume
+    from routes import resume
     import webapi
     monkeypatch.setenv("DASHBOARD_PASSWORD", "pw")
     st = MemStore()
@@ -115,7 +115,7 @@ def test_old_single_profile_is_migrated_and_used_in_searches():
 
 def test_dashboard_search_uses_resume_when_asked(monkeypatch):
     import webapi
-    from api import run as run_api
+    from routes import run as run_api
     webapi._hits.clear()
     monkeypatch.setenv("DASHBOARD_PASSWORD", "pw")
     monkeypatch.setattr(run_api, "_resume_args", lambda *a: ["--roles", "Data Analyst"])

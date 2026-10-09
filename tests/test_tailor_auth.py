@@ -63,8 +63,8 @@ def test_session_tokens(monkeypatch):
 
 
 def test_login_and_throttle(monkeypatch):
-    from api import login
-    from api import jobs
+    from routes import login
+    from routes import jobs
     monkeypatch.setenv("DASHBOARD_PASSWORD", "pw")
     webapi._hits.clear()
     hdr = {"X-Forwarded-For": "1.2.3.4"}
@@ -86,7 +86,7 @@ def test_rate_limit():
 
 
 def test_tailor_api(monkeypatch):
-    from api import tailor as tailor_api
+    from routes import tailor as tailor_api
     monkeypatch.setenv("DASHBOARD_PASSWORD", "pw")
     st = type("S", (), {"read": lambda self, *t: {"Jobs": [{"Job ID": "J1", "Job Title": "Junior Data Analyst", "Company": "Acme"}],
                                                    "Details": [{"Job ID": "J1", "Description": JOB}]}})()
