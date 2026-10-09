@@ -33,7 +33,7 @@ class SerpApi:
             raise BudgetExhausted(f"SerpApi call budget ({self.max_calls}) used up for this run")
         self.calls += 1
         try:
-            r = http_client.request("GET", SERPAPI_URL, params={**params, "api_key": self.api_key})
+            r = http_client.request_quick("GET", SERPAPI_URL, params={**params, "api_key": self.api_key}, timeout=http_client.QUICK_TIMEOUT)
         except requests.RequestException as e:
             raise SerpApiError(http_client.redact(f"SerpApi request failed: {e}")) from None
         if r.status_code == 401:

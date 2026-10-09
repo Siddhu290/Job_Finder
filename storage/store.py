@@ -204,7 +204,7 @@ class Store:
 
 
     # ---------- retry queue ----------
-    def retry_queue(self, now_s, limit=5, max_attempts=3) -> list:
+    def retry_queue(self, now_s, limit=10, max_attempts=3) -> list:
         """Needs Review jobs that failed for a transient reason and are due for another attempt.
         Uses no discovery searches; employer look-ups are usually cached."""
         from models import NEEDS_REVIEW, Job

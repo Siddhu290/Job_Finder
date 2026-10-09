@@ -91,7 +91,7 @@ def test_429_and_5xx_are_retried(monkeypatch, no_sleep):
 
 # ---------- SerpApi ----------
 def test_serpapi_auth_error_and_budget(monkeypatch):
-    monkeypatch.setattr(serpapi_search.http_client, "request", lambda *a, **k: R(401, {"error": "Invalid API key"}))
+    monkeypatch.setattr(serpapi_search.http_client, "request_quick", lambda *a, **k: R(401, {"error": "Invalid API key"}))
     with pytest.raises(SerpApiAuthError):
         SerpApi("secret-key-123456", 5).search(q="x")
     s = SerpApi("secret-key-123456", 0)
@@ -102,14 +102,14 @@ def test_serpapi_auth_error_and_budget(monkeypatch):
 def test_serpapi_timeout_becomes_error_without_leaking_key(monkeypatch):
     def boom(*a, **k):
         raise requests.Timeout("https://serpapi.com/search.json?api_key=secret-key-123456&q=x timed out")
-    monkeypatch.setattr(serpapi_search.http_client, "request", boom)
+    monkeypatch.setattr(serpapi_search.http_client, "request_quick", boom)
     with pytest.raises(SerpApiError) as e:
         SerpApi("secret-key-123456", 5).search(q="x")
     assert "secret-key-123456" not in str(e.value)
 
 
 def test_serpapi_no_results_is_empty(monkeypatch):
-    monkeypatch.setattr(serpapi_search.http_client, "request",
+    monkeypatch.setattr(serpapi_search.http_client, "request_quick",
                         lambda *a, **k: R(200, {"error": "Google hasn't returned any results for this query."}))
     assert SerpApi("secret-key-123456", 5).search(q="x") == {}
 

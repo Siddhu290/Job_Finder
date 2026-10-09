@@ -4,7 +4,7 @@ import re
 from datetime import date
 
 import filters
-from models import BUDGET_NOTE, CLOSED, REJECTED, VERIFIED
+from models import BUDGET_NOTE, CLOSED, PENDING_NOTE, REJECTED, VERIFIED
 
 EMAIL_RX = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,24}\b")
 _SKIP_EMAIL = re.compile(r"^(no-?reply|donotreply|do-not-reply|privacy|abuse|postmaster|webmaster|unsubscribe)@"
@@ -69,7 +69,7 @@ def score(row: dict, today: date | None = None, match_overall: int | None = None
         add(min(25, pct // 4), f"{pct}% resume match")
     if preferred:
         add(15, "preferred company")
-    if notes.startswith(BUDGET_NOTE):
+    if notes.startswith(BUDGET_NOTE) or notes.startswith(PENDING_NOTE):
         add(-20, "not checked yet")
     label = "High" if pts >= 100 else "Medium" if pts >= 40 else "Low"
     return pts, label, why

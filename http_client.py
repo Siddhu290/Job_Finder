@@ -184,3 +184,8 @@ class RedactingFilter(logging.Filter):
         record.msg = redact(record.getMessage())
         record.args = ()
         return True
+
+
+# For slow third-party APIs inside a time-limited run: one retry, short backoff (instead of 4 tries x 25 s).
+request_quick = retry(attempts=2, base_delay=1.0)(request.__wrapped__)
+QUICK_TIMEOUT = (5, 20)

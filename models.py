@@ -12,6 +12,7 @@ PASS, FAIL, UNKNOWN = "pass", "fail", "unknown"
 CHECKS = ["employer", "official_site", "careers_page", "ats_link", "vacancy_match", "requisition_id",
           "open_status", "apply_url", "experience", "location"]
 BUDGET_NOTE = "not verified: SerpApi budget for this run used up"
+PENDING_NOTE = "not verified yet: the search ran out of time; it is verified automatically in your next search"
 
 
 @dataclass
@@ -43,6 +44,7 @@ class Job:
     # "listing" (in a portal's copy, unverified) or "profile" (public profile from search results, unverified)
     contacts: list = field(default_factory=list)
     attempts: int = 0              # verification attempts so far (retry queue)
+    pending: bool = False          # saved without verification because the run ran out of time
 
     def check(self, name, status, detail, url=""):
         self.checks[name] = {"status": status, "detail": detail[:300], "url": url}

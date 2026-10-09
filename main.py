@@ -8,6 +8,7 @@ import logging
 import os
 import re
 import threading
+import time
 import logging.handlers
 import signal
 import sys
@@ -26,7 +27,7 @@ import config
 from discovery import ats_boards, hr_search, query_builder
 from discovery.serpapi_search import BudgetExhausted, SerpApi, SerpApiAuthError, SerpApiError, google_jobs
 from integrations.google_sheets import C, HEADERS, SheetsClient, SheetsError, job_row, needs_headers, plan_sync
-from models import BUDGET_NOTE, CLOSED, NEEDS_REVIEW, REJECTED, VERIFIED
+from models import BUDGET_NOTE, CLOSED, NEEDS_REVIEW, PENDING_NOTE, REJECTED, VERIFIED
 from storage.deduplication import dedupe, job_id, job_key
 from verification import pipeline
 from storage import backend, store
@@ -34,6 +35,8 @@ from verification.company_resolver import CompanyCache
 
 log = logging.getLogger("job_finder")
 STOP = False
+RUN_STARTED = 0.0          # monotonic time the run started
+DISCOVERY_SHARE = 0.4      # with a time limit, discovery may use at most this share of it; verification gets the rest
 
 
 def _time_up():
@@ -95,8 +98,12 @@ def discover(serp, stats, budget):
             break
         raw += ats_boards.board_jobs(entry, stats)
     p = filters.PROFILE
+    limit = float(os.getenv("RUN_TIME_LIMIT", "0") or 0)
     for q, where, wfh in query_builder.build(p.locations, p.mode, p.roles)[:budget]:  # deduplicated, best first
         if STOP:
+            break
+        if limit and time.monotonic() - RUN_STARTED > limit * DISCOVERY_SHARE and raw:
+            log.warning("discovery time budget used; verifying what was found so far")
             break
         try:
             found = google_jobs(serp, q, where, wfh)
@@ -191,8 +198,6 @@ def run(args):
     serp.max_calls = cfg.serpapi_max_calls - hr_reserve
     kept = []
     for job in candidates:
-        if STOP:
-            break
         ok, why = filters.title_check(job.title)
         if ok and any(re.search(rf"\b{re.escape(k)}\b", job.company, re.I) for k in profile.exclude):
             ok, why = False, "excluded company keyword"
@@ -206,6 +211,13 @@ def run(args):
         if not ok:
             stats["rejected_filters"] += 1
             log.info("filtered out: %s @ %s (%s)", job.title, job.company, why)
+            continue
+        if STOP:
+            # out of time: keep it (search credits were spent finding it) and verify it in the next run
+            job.status, job.retry, job.pending = NEEDS_REVIEW, True, True
+            job.notes.insert(0, PENDING_NOTE)
+            stats["pending"] = stats.get("pending", 0) + 1
+            kept.append(job)
             continue
         pipeline.verify_job(job, serp, cache, stats)
         hits, total = filters.skill_match(job.description)
@@ -298,8 +310,9 @@ def details_record(j, now_s):
 
 def verification_record(j, run_id, now_s):
     retry = j.retry and j.status == NEEDS_REVIEW
-    attempts = j.attempts + 1
-    nxt = (datetime.strptime(now_s, "%Y-%m-%d %H:%M") + timedelta(hours=12 * attempts)).strftime("%Y-%m-%d %H:%M") if retry else ""
+    pending = getattr(j, "pending", False)          # never attempted (time limit): due in the very next run
+    attempts = j.attempts if pending else j.attempts + 1
+    nxt = now_s if pending else (datetime.strptime(now_s, "%Y-%m-%d %H:%M") + timedelta(hours=12 * attempts)).strftime("%Y-%m-%d %H:%M") if retry else ""
     is_open = j.checks.get("open_status", {}).get("status") == "pass"
     return {"Timestamp": now_s, "Job ID": job_id(j), "Run ID": run_id, "Status": j.status, "Req ID": j.req_id,
             "Reason": j.notes[0] if j.notes else "", "Checks": j.checks, "Last Open Check": now_s if is_open else "",
@@ -418,6 +431,7 @@ def print_summary(s, dry_run):
             ("Duplicates skipped/merged", s["duplicates_skipped"]), ("SerpApi calls used", s.get("serpapi_calls", 0)),
             ("Left unverified: SerpApi budget used up", s.get("budget_skipped", 0)),
             ("Jobs with HR LinkedIn profiles found", s.get("hr_found", 0)),
+            ("Saved, to verify in the next search (time limit)", s.get("pending", 0)),
             ("API/verification errors", len(s["errors"]))]
     for k, v in rows:
         print(f"  {k:<52}{v}")
@@ -475,8 +489,9 @@ def main(argv=None):
         signal.signal(signal.SIGINT, _on_signal)
     except ValueError:
         pass  # not the main thread (e.g. inside a serverless request handler)
-    global STOP
+    global STOP, RUN_STARTED
     STOP = False  # a warm serverless process may have stopped a previous run
+    RUN_STARTED = time.monotonic()
     timer = None
     limit = float(os.getenv("RUN_TIME_LIMIT", "0"))
     if limit:  # serverless hosts kill long runs: stop discovering/verifying in time to save results

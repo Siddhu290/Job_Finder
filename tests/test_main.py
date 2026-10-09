@@ -202,3 +202,19 @@ def test_use_saved_settings(world, monkeypatch):
     monkeypatch.setattr(main, "run", lambda args: seen.update(loc=args.locations, mode=args.mode) or 0)
     assert main.main(["--use-saved-settings", "--trigger", "cron"]) == 0
     assert seen == {"loc": "Mumbai", "mode": "wfh"}
+
+
+def test_time_limit_keeps_found_jobs_for_the_next_run(world, monkeypatch):
+    """If verification runs out of time, filtered jobs are still saved (credits were spent) and queued for retry."""
+    import main as m
+    real_discover = m.discover
+    monkeypatch.setattr(m, "discover", lambda *a, **k: (lambda raw: (setattr(m, "STOP", True), raw)[1])(real_discover(*a, **k)))
+    verified = []
+    monkeypatch.setattr(m.pipeline, "verify_job", lambda job, *a: verified.append(job))
+    assert m.main(["--max-calls", "6"]) == 0
+    assert verified == []                                                                  # no time left to verify
+    pending = [v for v in FakeStore.last.tabs["Verification"] if v["Reason"].startswith("not verified yet")]
+    assert len(pending) == 1 and pending[0]["Retry"] == "yes" and pending[0]["Attempts"] == 0 and pending[0]["Next Check"]
+    rows = FakeSheets.last.values[1:]
+    assert len(rows) == 1 and rows[0][2] == "Data Analyst" and "not verified yet" in rows[0][14]   # saved, not dropped
+    assert rows[0][10] == ""                                                               # never an unverified apply URL
