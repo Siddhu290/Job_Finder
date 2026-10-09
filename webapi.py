@@ -48,7 +48,7 @@ def token_ok(token: str, now=None) -> bool:
         return False
 
 
-OWNER = {"id": None, "email": "", "name": "Owner", "role": "admin"}
+OWNER = {"id": None, "email": "", "name": "Owner", "role": "admin", "shared_access": "approved"}
 
 
 def authorized(h) -> bool:
@@ -186,7 +186,8 @@ def serpapi_key(h, st=None) -> str:
     import user_secrets
     from storage import backend
     try:
-        return user_secrets.key_for_run(st or store(h), backend.is_pg(), user_of(h)["role"] == "admin")[0]
+        import access
+        return user_secrets.key_for_run(st or store(h), backend.is_pg(), access.may_use_server_keys(user_of(h)))[0]
     except Exception:
         return ""
 
@@ -196,7 +197,8 @@ def llm_key(h, st=None) -> str:
     import user_secrets
     from storage import backend
     try:
-        return user_secrets.key_for(st or store(h), "groq", backend.is_pg(), user_of(h)["role"] == "admin")[0]
+        import access
+        return user_secrets.key_for(st or store(h), "groq", backend.is_pg(), access.may_use_server_keys(user_of(h)))[0]
     except Exception:
         return ""
 

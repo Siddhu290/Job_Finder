@@ -373,7 +373,7 @@ def choose_serpapi_key(st, user_ref=None) -> tuple:
             st = backend.open_store(uid) if (uid or not multi) else None
         except Exception:  # noqa: BLE001 - no storage: fall back to the server key
             st = None
-    is_admin = (backend.user_role(uid) == "admin") if uid else not multi
+    is_admin = backend.may_use_server_keys(uid) if uid else not multi   # admins and approved users may share
     key, source = user_secrets.key_for_run(st, multi, is_admin)
     if not key:
         raise ConfigError("No SerpApi key: add your key in Settings → SerpApi key"

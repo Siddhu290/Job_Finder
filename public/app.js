@@ -13,7 +13,9 @@ const S = { data: null, view: "dashboard", page: 25, analytics: null, range: "30
   f: { q: "", role: "All", loc: "", mode: "All", exp: "All", posted: "All", vstatus: "All", minMatch: 0, company: "", prio: "All",
        sort: "priority", showHidden: false } };
 const VIEWS = [["dashboard", "Dashboard"], ["find", "Find Jobs"], ["saved", "Saved Jobs"], ["apps", "Applications"],
-  ["follow", "Follow-ups"], ["resume", "Resume Lab"], ["analytics", "Analytics"], ["settings", "Settings"], ["archive", "Archive"]];
+  ["follow", "Follow-ups"], ["resume", "Resume Lab"], ["analytics", "Analytics"], ["settings", "Settings"], ["archive", "Archive"],
+  ["admin", "Admin"]];
+const isAdmin = () => !!(S.data && S.data.user && S.data.user.multi_user && S.data.user.role === "admin");
 const IN_PROGRESS = ["Applied", "Online Assessment", "Recruiter Screening", "Technical Interview", "HR Interview"];
 const TERMINAL = ["Offer", "Rejected", "Withdrawn", "Not Interested"];
 const CHECK_NAMES = { employer: "Employer identified", official_site: "Official website", careers_page: "Careers page",
@@ -74,6 +76,7 @@ function drawGate() {
   $("#gateSub").textContent = !AUTH.multi ? "Enter the dashboard password. Your session lasts 12 hours."
     : signup ? "Your jobs, applications and resume stay private to your account." : "Welcome back. Sessions last 12 hours.";
   $("#nameField").hidden = !signup; $("#emailField").hidden = !AUTH.multi;
+  $("#emailLabel").textContent = signup ? "Email" : "Email or username";
   $("#pw2Field").hidden = !signup; $("#inviteField").hidden = !(signup && AUTH.registration === "invite");
   $("#pw").autocomplete = signup ? "new-password" : "current-password";
   $("#pw").placeholder = signup ? "At least 10 characters" : "";
@@ -89,7 +92,9 @@ $("#gateForm").onsubmit = async e => {
   e.preventDefault();
   const signup = AUTH.multi && AUTH.page === "signup";
   const err = m => { $("#gateErr").textContent = m };
-  if (AUTH.multi && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test($("#email").value.trim())) return err("Enter a valid email address");
+  const login = $("#email").value.trim();
+  if (AUTH.multi && signup && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(login)) return err("Enter a valid email address");
+  if (AUTH.multi && !signup && !login) return err("Enter your email or username");
   if (signup && $("#pw").value.length < 10) return err("Password must be at least 10 characters");
   if (signup && $("#pw").value !== $("#pw2").value) return err("The two passwords don't match");
   if (!$("#pw").value) return err("Enter your password");
@@ -122,10 +127,11 @@ function renderNav() {
     saved: jobs.filter(j => ["Saved", "Ready to Apply"].includes(stageOf(j))).length,
     apps: jobs.filter(j => IN_PROGRESS.includes(stageOf(j))).length,
     follow: S.data ? S.data.followups.overdue.length + S.data.followups.today.length : 0,
-    archive: S.data ? S.data.archive.length : 0 };
+    archive: S.data ? S.data.archive.length : 0, admin: S.data && S.data.user ? S.data.user.pending_requests : 0 };
   const who = S.data && S.data.user && S.data.user.multi_user ? el("div", { class: "sub", style: "padding:0 10px 12px;margin-top:-10px" }, S.data.user.name || S.data.user.email) : "";
   $("#nav").replaceChildren(el("div", { class: "brand" }, "Fresher Data Jobs"), who,
-    ...VIEWS.map(([k, label]) => el("button", { "aria-current": S.view === k ? "page" : null, onclick() { go(k) } }, label, n[k] ? el("span", { class: "count" }, n[k]) : "")),
+    ...VIEWS.filter(([k]) => k !== "admin" || isAdmin()).map(([k, label]) => el("button", { "aria-current": S.view === k ? "page" : null, onclick() { go(k) } },
+      label, n[k] ? el("span", { class: "count" + (k === "admin" ? " alert" : ""), "aria-label": k === "admin" ? `${n[k]} pending requests` : null }, n[k]) : "")),
     el("div", { class: "foot" }, el("button", { class: "btn small", onclick: load }, "Refresh"), el("button", { class: "btn small", onclick: toggleTheme }, "Theme"),
       el("button", { class: "btn small", onclick() { store.set("session", null, sessionStorage); showGate() } }, "Sign out")));
 }
@@ -133,7 +139,11 @@ function renderNav() {
 // ---------- data ----------
 async function load() {
   $("#main").replaceChildren(el("div", { class: "empty" }, el("span", { class: "spinner" }), " Loading your jobs…"));
-  try { S.data = await api("/api/jobs"); render() }
+  try {
+    S.data = await api("/api/jobs"); render();
+    const p = S.data.user && S.data.user.pending_requests;
+    if (isAdmin() && p && S.view !== "admin") toast(`${p} user${p === 1 ? "" : "s"} asked to use your API keys`, 8000, { label: "Review", fn: () => go("admin") });
+  }
   catch (e) { if (e.message !== "unauthorized") $("#main").replaceChildren(el("div", { class: "notice bad" }, e.message)) }
 }
 const job = id => S.data.jobs.find(j => j.id === id);
@@ -679,7 +689,8 @@ function keysPanel(b) {
   };
   const card = (kind, st) => {
     const input = el("input", { type: "password", autocomplete: "off", placeholder: kind === "groq" ? "gsk_…" : "Paste your SerpApi key", "aria-label": INFO[kind].title, style: "flex:1 1 260px" });
-    const line = { own: `Saved: your key ${st.hint}.`, server: "Using the server's key (admin).", none: "Not added yet.", error: st.error }[st.source];
+    const line = { own: `Saved: your key ${st.hint}.`, server: isAdmin() || !(S.data.user || {}).multi_user ? "Using the server's key." : "Using the admin's key (approved).",
+      none: "Not added yet.", error: st.error }[st.source];
     return el("div", { class: "mini", style: "padding:14px" },
       el("h3", {}, INFO[kind].title),
       el("p", { style: "margin:4px 0" }, line, kind === "serpapi" && st.searches_left != null ? ` ${st.searches_left} searches left this month (confirmed).` : ""),
@@ -693,10 +704,29 @@ function keysPanel(b) {
       el("ol", { class: "muted", style: "margin:8px 0 0 18px;padding:0" }, INFO[kind].steps.map(t => el("li", {}, t))),
       el("div", { class: "row", style: "margin-top:6px" }, ext(INFO[kind].get, "Get a free key ↗", "btn small"), ext(INFO[kind].find, "Find my key ↗", "btn small link")));
   };
+  const accessBlock = () => {
+    const u = S.data.user || {};
+    if (!u.multi_user || u.role === "admin") return "";
+    const wrap = el("div", { class: "mini", style: "padding:14px;margin-top:12px" }, el("h3", {}, "No keys of your own?"));
+    const fill = st => {
+      const ask = label => el("button", { class: "btn", async onclick() {
+        const message = prompt("Optional message for the admin (why you need access):", "") ?? null;
+        if (message === null) return;
+        try { fill(await post("/api/access", { action: "request", message })); toast("Request sent to the admin") } catch (e) { fail(e) } } }, label);
+      wrap.replaceChildren(el("h3", {}, "No keys of your own?"), ...({
+        none: [el("p", { class: "muted" }, "You can ask the admin for permission to use their SerpApi and Groq keys. They'll see your request and approve or deny it."), ask("Request access to the admin's keys")],
+        pending: [el("p", { class: "notice" }, `Request sent${st.requested_at ? " on " + st.requested_at.slice(0, 10) : ""}: waiting for the admin to approve.`)],
+        approved: [el("p", { class: "notice ok" }, "Approved: when you haven't saved your own key, your searches and resume AI use the admin's keys. Please use them fairly.")],
+        denied: [el("p", { class: "notice bad" }, "The admin declined your request. Add your own free keys above, or ask again."), ask("Ask again")],
+      }[st.status] || []));
+    };
+    api("/api/access").then(fill).catch(() => wrap.remove());
+    return wrap;
+  };
   const reload = () => api("/api/keys").then(k => box.replaceChildren(el("h2", {}, "API keys"),
     el("p", { class: "muted" }, "Each user uses their own keys. They're checked with the provider (free, no searches used), stored encrypted, and never shown again in full. ",
       `SerpApi limits: up to ${b.per_run} searches per run, ${b.monthly_limit} per month.`),
-    el("div", { class: "grid", style: "grid-template-columns:repeat(auto-fit,minmax(320px,1fr))" }, card("serpapi", k.serpapi), card("groq", k.groq))))
+    el("div", { class: "grid", style: "grid-template-columns:repeat(auto-fit,minmax(320px,1fr))" }, card("serpapi", k.serpapi), card("groq", k.groq)), accessBlock()))
     .catch(e => box.replaceChildren(el("h2", {}, "API keys"), el("p", { class: "notice bad" }, e.message)));
   reload();
   return box;
@@ -755,11 +785,42 @@ function viewArchive() {
           el("td", {}, el("button", { class: "btn small", onclick() { restore([r.id]) } }, "Restore")))))) : el("div", { class: "empty" }, "The archive is empty.")];
 }
 
+// ---------- admin ----------
+function viewAdmin() {
+  if (!isAdmin()) return [el("div", { class: "empty" }, "Only admins can see this page.")];
+  const box = el("div", {}, el("div", { class: "empty" }, el("span", { class: "spinner" }), " Loading…"));
+  const act = async (action, u) => {
+    if (action === "revoke" && !confirm(`Stop ${u.email} from using your keys?`)) return;
+    try { await post("/api/access", { action, user_id: u.id }); toast({ approve: "Approved", deny: "Denied", revoke: "Access revoked" }[action]); load(); draw() } catch (e) { fail(e) }
+  };
+  const draw = () => api("/api/access").then(d => box.replaceChildren(
+    el("section", { class: "panel" }, el("h2", {}, `Access requests (${d.pending.length})`),
+      d.pending.length ? el("table", {}, el("tr", {}, ["User", "Message", "Requested", ""].map(h => el("th", {}, h))),
+        d.pending.map(u => el("tr", {}, el("td", {}, el("b", {}, u.name || u.username || u.email), el("div", { class: "muted" }, u.email)),
+          el("td", {}, u.message || el("span", { class: "muted" }, "—")), el("td", { class: "mono" }, u.requested),
+          el("td", {}, el("span", { class: "row" }, el("button", { class: "btn small verified", onclick() { act("approve", u) } }, "Approve"),
+            el("button", { class: "btn small danger", onclick() { act("deny", u) } }, "Deny"))))))
+        : el("p", { class: "muted" }, "No pending requests.")),
+    el("section", { class: "panel" }, el("h2", {}, `Using your keys (${d.approved.length})`),
+      el("p", { class: "muted" }, "Approved users' searches and resume AI use your SerpApi and Groq keys when they haven't saved their own. Their usage counts against your SerpApi monthly limit."),
+      d.approved.length ? el("table", {}, el("tr", {}, ["User", "Approved", "By", "Last search", ""].map(h => el("th", {}, h))),
+        d.approved.map(u => el("tr", {}, el("td", {}, u.email), el("td", { class: "mono" }, u.decided), el("td", {}, u.decided_by), el("td", { class: "mono" }, u.last_search || "—"),
+          el("td", {}, el("button", { class: "btn small danger", onclick() { act("revoke", u) } }, "Revoke")))))
+        : el("p", { class: "muted" }, "Nobody yet.")),
+    el("section", { class: "panel" }, el("h2", {}, `All users (${d.users.length})`),
+      el("table", {}, el("tr", {}, ["Email", "Username", "Role", "Created", "Last search", "Key access"].map(h => el("th", {}, h))),
+        d.users.map(u => el("tr", {}, el("td", {}, u.email), el("td", {}, u.username || "—"), el("td", {}, u.role), el("td", { class: "mono" }, u.created),
+          el("td", { class: "mono" }, u.last_search || "—"), el("td", {}, el("span", { class: "tag" + (u.access === "approved" || u.role === "admin" ? " ok" : u.access === "pending" ? " warn" : "") }, u.role === "admin" ? "admin" : u.access))))),
+      el("p", { class: "muted" }, "Create accounts or reset passwords with manage.py (see README).")))).catch(e => box.replaceChildren(el("p", { class: "notice bad" }, e.message)));
+  draw();
+  return [el("div", { class: "head" }, el("div", {}, el("h1", {}, "Admin"), el("div", { class: "sub" }, "Approve who may use your API keys."))), box];
+}
+
 // ---------- render ----------
 function render() {
   renderNav();
   if (!S.data) return;
-  const v = { dashboard: viewDashboard, find: viewFind, saved: viewSaved, apps: viewApps, follow: viewFollow, resume: viewResume, analytics: viewAnalytics, settings: viewSettings, archive: viewArchive }[S.view] || viewDashboard;
+  const v = { dashboard: viewDashboard, find: viewFind, saved: viewSaved, apps: viewApps, follow: viewFollow, resume: viewResume, analytics: viewAnalytics, settings: viewSettings, archive: viewArchive, admin: viewAdmin }[S.view] || viewDashboard;
   $("#main").replaceChildren(...v());
   if ($("#list")) renderList();
 }

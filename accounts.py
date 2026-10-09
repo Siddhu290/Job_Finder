@@ -18,6 +18,7 @@ MAX_FAILED = 5
 LOCK_MINUTES = 15
 SESSION_HOURS = 12
 _EMAIL = re.compile(r"^[^@\s<>]{1,64}@[A-Za-z0-9.-]{1,190}\.[A-Za-z]{2,24}$")
+_USERNAME = re.compile(r"^[a-z][a-z0-9_.-]{2,31}$")
 
 
 class AccountError(ValueError):
@@ -42,6 +43,13 @@ def verify_password(password: str, stored: str) -> bool:
         return hmac.compare_digest(got, base64.b64decode(h))
     except (ValueError, TypeError):
         return False
+
+
+def clean_username(username: str) -> str:
+    u = (username or "").strip().lower()
+    if not _USERNAME.match(u):
+        raise AccountError("Username: 3-32 characters, letters, digits, . _ - (starting with a letter)")
+    return u
 
 
 def clean_email(email: str) -> str:
@@ -81,31 +89,38 @@ def parse_token(token: str, now=None):
 
 
 # ---------- database operations (users table has no RLS; only this module touches it) ----------
-def create_user(conn, email: str, password: str, name: str = "", role: str = "user") -> dict:
+def create_user(conn, email: str, password: str, name: str = "", role: str = "user", username: str | None = None) -> dict:
     email = clean_email(email)
+    username = clean_username(username) if username else None
     if role not in ("user", "admin"):
         raise AccountError("role must be user or admin")
     with conn.transaction():
         if conn.execute("SELECT 1 FROM users WHERE email = %s", [email]).fetchone():
             raise AccountError("An account with this email already exists")
+        if username and conn.execute("SELECT 1 FROM users WHERE username = %s", [username]).fetchone():
+            raise AccountError("That username is taken")
         uid = str(uuid.uuid4())
-        conn.execute("INSERT INTO users (id, email, name, password_hash, role) VALUES (%s, %s, %s, %s, %s)",
-                     [uid, email, (name or "")[:80], hash_password(password), role])
-    return {"id": uid, "email": email, "name": name, "role": role}
+        conn.execute("INSERT INTO users (id, email, username, name, password_hash, role) VALUES (%s, %s, %s, %s, %s, %s)",
+                     [uid, email, username, (name or "")[:80], hash_password(password), role])
+    return {"id": uid, "email": email, "username": username, "name": name, "role": role}
 
 
-def authenticate(conn, email: str, password: str) -> dict:
-    """Returns the user or raises AccountError with a message that doesn't reveal whether the email exists.
-    The failure counter is committed BEFORE the error is raised (raising inside the transaction would roll it back)."""
-    bad = AccountError("Wrong email or password")
+def authenticate(conn, login: str, password: str) -> dict:
+    """login is an email or a username. Returns the user or raises AccountError with a message that doesn't reveal
+    whether the account exists. The failure counter is committed BEFORE the error is raised (raising inside the
+    transaction would roll it back)."""
+    bad = AccountError("Wrong email/username or password")
     try:
-        email = clean_email(email)
+        if "@" in (login or ""):
+            field, value = "email", clean_email(login)
+        else:
+            field, value = "username", clean_username(login)
     except AccountError:
         raise bad from None
     error = None
     with conn.transaction():
-        u = conn.execute("SELECT *, (locked_until IS NOT NULL AND locked_until > now()) AS locked FROM users WHERE email = %s FOR UPDATE",
-                         [email]).fetchone()
+        u = conn.execute(f"SELECT *, (locked_until IS NOT NULL AND locked_until > now()) AS locked FROM users WHERE {field} = %s FOR UPDATE",
+                         [value]).fetchone()
         if not u:
             verify_password(password, "scrypt$16384$8$1$AAAAAAAAAAAAAAAAAAAAAA==$AAAA")  # similar timing for unknown emails
             error = bad
@@ -132,10 +147,12 @@ def user_for_token(conn, token: str):
     parsed = parse_token(token)
     if not parsed:
         return None
-    u = conn.execute("SELECT id, email, name, role, session_version, disabled FROM users WHERE id = %s", [parsed[0]]).fetchone()
+    u = conn.execute("SELECT id, email, username, name, role, session_version, disabled, shared_access FROM users WHERE id = %s",
+                     [parsed[0]]).fetchone()
     if not u or u["disabled"] or u["session_version"] != parsed[1]:
         return None
-    return {"id": str(u["id"]), "email": u["email"], "name": u["name"], "role": u["role"], "session_version": u["session_version"]}
+    return {"id": str(u["id"]), "email": u["email"], "username": u["username"] or "", "name": u["name"], "role": u["role"],
+            "session_version": u["session_version"], "shared_access": u["shared_access"]}
 
 
 def change_password(conn, user_id: str, current: str, new: str):

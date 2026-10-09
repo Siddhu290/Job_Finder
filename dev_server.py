@@ -17,7 +17,7 @@ import json  # noqa: E402
 HEADERS = {h["key"]: h["value"] for h in json.loads((ROOT / "vercel.json").read_text())["headers"][0]["headers"]
            if h["key"] != "Strict-Transport-Security"}   # same security headers as production (no HSTS on http)
 ROUTES = {"jobs", "run", "action", "resume", "login", "application", "settings", "analytics", "tailor", "health",
-          "register", "account", "serpapi", "sheet", "keys", "resumes", "ats"}
+          "register", "account", "serpapi", "sheet", "keys", "resumes", "ats", "access"}
 
 
 class Dev(BaseHTTPRequestHandler):

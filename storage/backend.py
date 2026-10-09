@@ -79,3 +79,8 @@ def user_role(user_id) -> str:
 def user_email(user_id) -> str:
     r = conn().execute("SELECT email FROM users WHERE id = %s", [user_id]).fetchone()
     return r["email"] if r else ""
+
+
+def may_use_server_keys(user_id) -> bool:
+    r = conn().execute("SELECT role, shared_access FROM users WHERE id = %s", [user_id]).fetchone()
+    return bool(r) and (r["role"] == "admin" or r["shared_access"] == "approved")

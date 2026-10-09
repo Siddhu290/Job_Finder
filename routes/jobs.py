@@ -137,5 +137,9 @@ class handler(BaseHTTPRequestHandler):
                           "per_run": int(os.environ.get("SERPAPI_MAX_CALLS", "30") or 30), "monthly_limit": budget.monthly_limit()}
         body["searches_left"] = acct.get("total_searches_left")
         u = webapi.user_of(self)
-        body["user"] = {"email": u["email"], "name": u["name"], "role": u["role"], "multi_user": backend.is_pg()}
+        body["user"] = {"email": u["email"], "name": u["name"] or u.get("username", ""), "role": u["role"], "multi_user": backend.is_pg(),
+                        "shared_access": u.get("shared_access", "none"), "pending_requests": 0}
+        if backend.is_pg() and u["role"] == "admin":
+            import access
+            body["user"]["pending_requests"] = access.pending_count(backend.conn())
         return webapi.send(self, 200, body)

@@ -74,7 +74,8 @@ def key_hint(st, kind: str) -> str:
 
 
 def key_for(st, kind: str, multi_user: bool, is_admin: bool) -> tuple:
-    """(key, source) where source is "own" | "server" | "none". Server keys are for admins only in multi-user mode."""
+    """(key, source) where source is "own" | "server" | "none". In multi-user mode the server keys are only for
+    users allowed to share them (admins and users an admin approved): pass that as is_admin."""
     own = get_key(st, kind) if st is not None else ""
     if own:
         return own, "own"

@@ -76,7 +76,7 @@ cp .env.example .env && chmod 600 .env        # fill in values; never commit .en
 3. Apply the schema (Node 18+):
    ```bash
    npm install                       # installs the Prisma CLI (dev only)
-   npx prisma migrate deploy         # applies 0001_init, 0002_row_level_security, 0003_restricted_app_role
+   npx prisma migrate deploy         # applies migrations 0001–0004
    npx prisma migrate status
    ```
 4. Create the first (admin) account. The password is typed at a prompt, never passed as an argument:
@@ -126,7 +126,7 @@ Exit codes:
 ```bash
 .venv/bin/python -m pytest -q
 ```
-The suite has 232 tests and needs no network. `tests/test_postgres.py` starts its **own throwaway Postgres**
+The suite has 233 tests and needs no network. `tests/test_postgres.py` starts its **own throwaway Postgres**
 from local server binaries (`/usr/lib/postgresql/*/bin`), applies the real migrations and connects as a
 non-superuser role. If no Postgres binaries are installed, those 12 tests are skipped.
 
@@ -218,6 +218,18 @@ Built-in protections:
 - **API keys** (Settings): each user saves their own **SerpApi** key (job search) and **Groq** key (resume AI),
   with links to get free keys. Keys are tested with the provider before saving, encrypted, and never shown in full.
 
+### Sharing the admin's keys (request access)
+- **Requesting:** a user without their own keys clicks **Request access to the admin's keys** in *Settings → API keys*,
+  optionally with a message.
+- **Notification:** admins get an in-app notification (a red badge on **Admin** and a pop-up) and can
+  **Approve**, **Deny** or later **Revoke**.
+- **Effect of approval:** the user's searches and resume AI fall back to the server's `SERPAPI_KEY` / `LLM_API_KEY`
+  when they haven't saved their own key. That usage counts against the admin's SerpApi monthly limit.
+- **Record keeping:** every decision is stored (who, when) and audited.
+- **Admin accounts:** the first account is admin. More admins come from the terminal (password typed privately):
+  `.venv/bin/python manage.py create-user you@example.com --username admin --name Admin --admin`.
+  Users can sign in with their email **or** username.
+
 ## Future scope
 
 - **One-click "Apply" with a tailored resume.** Pressing *Apply now* on a job will:
@@ -297,5 +309,5 @@ routes/         jobs run action application resume tailor settings analytics log
 public/         index.html app.css app.js
 prisma/         schema.prisma, migrations/
 scheduler/      setup_schedule.sh (systemd)
-tests/          232 tests
+tests/          233 tests
 ```

@@ -16,6 +16,7 @@ datasource db {
 model User {
   id             String    @id @default(uuid()) @db.Uuid
   email          String    @unique
+  username       String?   @unique // optional sign-in name (e.g. "admin"); lowercase
   name           String    @default("")
   passwordHash   String    @map("password_hash")
   role           String    @default("user") // "user" | "admin"
@@ -24,6 +25,12 @@ model User {
   lockedUntil    DateTime? @map("locked_until") @db.Timestamptz
   disabled       Boolean   @default(false)
   lastRunAt      DateTime? @map("last_run_at") @db.Timestamptz
+  /// Use of the admin's SerpApi/Groq keys: "none" | "pending" | "approved" | "denied" (admins always may)
+  sharedAccess            String    @default("none") @map("shared_access")
+  sharedAccessMessage     String    @default("") @map("shared_access_message")
+  sharedAccessRequestedAt DateTime? @map("shared_access_requested_at") @db.Timestamptz
+  sharedAccessDecidedAt   DateTime? @map("shared_access_decided_at") @db.Timestamptz
+  sharedAccessDecidedBy   String    @default("") @map("shared_access_decided_by")
   createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz
 
   jobs         Job[]

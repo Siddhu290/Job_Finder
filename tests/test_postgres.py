@@ -87,13 +87,13 @@ def test_accounts_password_lockout_and_sessions(db):
     tok = accounts.issue_token(u["id"], u["session_version"])
     assert accounts.user_for_token(c, tok)["email"] == "asha@example.com"
     for _ in range(4):
-        with pytest.raises(accounts.AccountError, match="Wrong email or password"):
+        with pytest.raises(accounts.AccountError, match="Wrong email/username or password"):
             accounts.authenticate(c, "asha@example.com", "nope")
     with pytest.raises(accounts.AccountError):
         accounts.authenticate(c, "asha@example.com", "nope")                       # 5th failure locks
     with pytest.raises(accounts.AccountError, match="Too many failed attempts"):
         accounts.authenticate(c, "asha@example.com", "correct horse battery")      # locked even with the right password
-    with pytest.raises(accounts.AccountError, match="Wrong email or password"):
+    with pytest.raises(accounts.AccountError, match="Wrong email/username or password"):
         accounts.authenticate(c, "nobody@example.com", "x")                        # no account enumeration
     accounts.sign_out_everywhere(c, a)
     assert accounts.user_for_token(c, tok) is None                                  # old sessions revoked
@@ -440,4 +440,42 @@ def test_signup_policy_and_first_admin(db, monkeypatch):
     monkeypatch.setenv("INVITE_CODE", "abc-123")
     assert register.policy() == "invite"
     assert post(register.handler, {}, {**body, "email": "third@example.com"})[0] == 403
+    webapi._hits.clear()
+
+
+def test_username_login_and_access_requests(db, monkeypatch):
+    """A user asks to use the admin's keys; only an admin can approve; approval grants the server key; revoke removes it."""
+    import access
+    import accounts
+    import user_secrets
+    import webapi
+    from routes import access as access_route, keys
+    from storage.pg import PgStore
+    from tests.test_vercel import call, post
+    webapi._hits.clear()
+    c = db.conn()
+    adm = accounts.create_user(c, "owner@example.com", "a very long admin pass", "Admin", "admin", username="admin")
+    usr = accounts.create_user(c, "user@example.com", "a very long user pass", "User")
+    # sign in by username or email
+    assert accounts.authenticate(c, "ADMIN", "a very long admin pass")["id"] == adm["id"]
+    with pytest.raises(accounts.AccountError):
+        accounts.create_user(c, "other@example.com", "a very long pass x", username="admin")       # usernames are unique
+    A = {"Authorization": "Bearer " + _login("admin", "a very long admin pass")[1]["token"]}
+    U = {"Authorization": "Bearer " + _login("user@example.com", "a very long user pass")[1]["token"]}
+    monkeypatch.setenv("SERPAPI_KEY", "serverkey0123456789abc")
+    monkeypatch.setattr("budget.account", lambda k: {"total_searches_left": 50})
+    assert call(keys.handler, U)[1]["serpapi"]["source"] == "none"                                # no access yet
+    assert post(access_route.handler, U, {"action": "request", "message": "Fresher, please"})[1]["status"] == "pending"
+    assert post(access_route.handler, U, {"action": "approve", "user_id": usr["id"]})[0] == 403    # users can't approve
+    view = call(access_route.handler, A)[1]
+    assert [p["email"] for p in view["pending"]] == ["user@example.com"] and view["pending"][0]["message"] == "Fresher, please"
+    assert post(access_route.handler, A, {"action": "approve", "user_id": usr["id"]})[1]["status"] == "approved"
+    assert call(keys.handler, U)[1]["serpapi"]["source"] == "server"                               # now shares the admin's key
+    assert user_secrets.key_for(PgStore(c, usr["id"]), "serpapi", True, access.may_use_server_keys(
+        accounts.user_for_token(c, U["Authorization"][7:])))[0] == "serverkey0123456789abc"
+    post(access_route.handler, A, {"action": "revoke", "user_id": usr["id"]})
+    assert call(keys.handler, U)[1]["serpapi"]["source"] == "none"
+    post(access_route.handler, U, {"action": "request"})
+    assert post(access_route.handler, A, {"action": "deny", "user_id": usr["id"]})[1]["status"] == "denied"
+    assert call(keys.handler, U)[1]["serpapi"]["source"] == "none"
     webapi._hits.clear()

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Admin commands for multi-user (Postgres) mode. Uses DATABASE_URL from .env. Passwords are typed, never passed as arguments.
 
-  python manage.py create-user EMAIL [--name NAME] [--admin]
+  python manage.py create-user EMAIL [--username NAME] [--name NAME] [--admin]
   python manage.py list-users
   python manage.py disable-user EMAIL | enable-user EMAIL
   python manage.py reset-password EMAIL
@@ -56,6 +56,7 @@ def main(argv=None):
     c = sub.add_parser("create-user")
     c.add_argument("email")
     c.add_argument("--name", default="")
+    c.add_argument("--username", default=None, help="optional sign-in name, e.g. admin")
     c.add_argument("--admin", action="store_true")
     sub.add_parser("list-users")
     for name in ("disable-user", "enable-user", "reset-password", "import-sheet"):
@@ -69,7 +70,7 @@ def main(argv=None):
     conn = backend.conn()
     try:
         if args.cmd == "create-user":
-            u = accounts.create_user(conn, args.email, _password(), args.name, "admin" if args.admin else "user")
+            u = accounts.create_user(conn, args.email, _password(), args.name, "admin" if args.admin else "user", args.username)
             import sheet_mirror
             tab = sheet_mirror.tab_title(u["email"]) if sheet_mirror.create_tab(u["email"]) else None
             print(f"Created {u['role']} {u['email']}" + (f"; Google Sheet tab '{tab}' ready" if tab else ""))

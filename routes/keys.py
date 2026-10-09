@@ -16,7 +16,7 @@ def status(h, st, kind):
     import user_secrets
     from storage import backend
     try:
-        key, source = user_secrets.key_for(st, kind, backend.is_pg(), webapi.user_of(h)["role"] == "admin")
+        key, source = user_secrets.key_for(st, kind, backend.is_pg(), __import__("access").may_use_server_keys(webapi.user_of(h)))
     except user_secrets.SecretsError as e:
         return {"source": "error", "error": str(e)}
     out = {"source": source, "hint": user_secrets.key_hint(st, kind) if source == "own" else ""}

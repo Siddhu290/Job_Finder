@@ -137,3 +137,4 @@ dialog .df{padding:12px 18px;border-top:1px solid var(--border);display:flex;jus
   .card{grid-template-columns:1fr}.score{flex-direction:row;gap:8px;height:auto;padding:6px 10px;width:max-content}
   .checks li{grid-template-columns:22px 1fr}.checks li .d{grid-column:2}
 }
+nav.side .count.alert{background:var(--bad);color:#fff}
