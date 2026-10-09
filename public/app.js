@@ -286,7 +286,7 @@ function filtered(base) {
     (f.exp === "All" || (f.exp === "Fresher-friendly" ? /fresh|entry|0|month|graduate/i.test(j.experience) && !/not stated/i.test(j.experience) : /not stated/i.test(j.experience || "not stated"))) &&
     (f.posted === "All" || (daysAgo(j.posted) != null && daysAgo(j.posted) <= Number(f.posted))) &&
     (f.vstatus === "All" || j.status === f.vstatus) &&
-    (!minMatch || (j.match && j.match.overall >= minMatch)) &&
+    (!minMatch || !S.data.profile || (j.match && j.match.overall >= minMatch)) &&   // no resume yet: no scores to filter on
     (!f.company || j.company.toLowerCase().includes(f.company.toLowerCase())) &&
     (f.prio === "All" || j.priority === f.prio) &&
     (!f.q || `${j.title} ${j.company} ${j.notes}`.toLowerCase().includes(f.q.toLowerCase())));
@@ -305,7 +305,7 @@ function filterBar() {
     txt("loc", "Location", "e.g. Pune, Mumbai"), sel("mode", "Work mode", ["All", "Work from home", "Office / hybrid"]),
     sel("exp", "Experience", ["All", "Fresher-friendly", "Not stated"]), sel("posted", "Posted", [["All", "Any time"], ["1", "24 hours"], ["3", "3 days"], ["7", "7 days"], ["14", "14 days"], ["30", "30 days"]]),
     sel("vstatus", "Verification", ["All", "Verified", "Needs Review", "Closed", "Rejected"]),
-    el("label", { class: "f" }, `Match ≥ ${f.minMatch}%`, el("input", { type: "range", min: 0, max: 100, step: 10, value: f.minMatch, oninput(e) { f.minMatch = e.target.value; e.target.previousSibling.textContent = `Match ≥ ${f.minMatch}%`; S.page = 25; renderList() } })),
+    el("label", { class: "f", title: S.data.profile ? "" : "Upload a resume in Resume Lab to get match scores" }, S.data.profile ? `Match ≥ ${f.minMatch}%` : "Match (add a resume first)", el("input", { type: "range", min: 0, max: 100, step: 10, value: f.minMatch, disabled: !S.data.profile || null, oninput(e) { f.minMatch = e.target.value; e.target.previousSibling.textContent = `Match ≥ ${f.minMatch}%`; S.page = 25; renderList() } })),
     txt("company", "Company", "name"), sel("prio", "Priority", ["All", "High", "Medium", "Low"]),
     sel("sort", "Sort by", [["priority", "Priority"], ["newest", "Newest"], ["match", "Highest match"], ["verification", "Verification state"]]),
     el("label", { class: "chk", style: "align-self:end" }, el("input", { type: "checkbox", checked: f.showHidden || null, onchange(e) { f.showHidden = e.target.checked; renderList() } }), "Show rejected / closed"));
