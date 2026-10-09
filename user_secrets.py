@@ -1,4 +1,4 @@
-"""Per-user secrets (currently: the SerpApi key), encrypted at rest and never sent to the browser.
+"""Per-user secrets (the SerpApi key and the Groq AI key), encrypted at rest and never sent to the browser.
 
 Encryption: Fernet (AES-128-CBC + HMAC-SHA256) with SECRETS_KEY from the server environment. Stored in the
 user's "_secrets" document (Postgres user_docs row protected by row-level security, or a hidden sheet tab in
@@ -12,7 +12,12 @@ import os
 import re
 
 DOC = "_secrets"
-_KEY_FORMAT = re.compile(r"^[A-Za-z0-9]{20,128}$")
+KINDS = {
+    "serpapi": {"env": ("SERPAPI_KEY",), "format": re.compile(r"^[A-Za-z0-9]{20,128}$"),
+                "bad": "That doesn't look like a SerpApi key (letters and digits only)"},
+    "groq": {"env": ("LLM_API_KEY", "GROQ_API_KEY"), "format": re.compile(r"^gsk_[A-Za-z0-9]{20,120}$"),
+             "bad": "That doesn't look like a Groq key (it starts with gsk_)"},
+}
 
 
 class SecretsError(ValueError):
@@ -36,44 +41,52 @@ def fingerprint(key: str) -> str:
     return hashlib.sha256(key.encode()).hexdigest()[:12] if key else "none"
 
 
-def save_serpapi_key(st, key: str):
+def save_key(st, kind: str, key: str):
     key = (key or "").strip()
-    if not _KEY_FORMAT.match(key):
-        raise SecretsError("That doesn't look like a SerpApi key (letters and digits only)")
+    if not KINDS[kind]["format"].match(key):
+        raise SecretsError(KINDS[kind]["bad"])
     doc = st.get_json(DOC) or {}
-    doc["serpapi"] = _fernet().encrypt(key.encode()).decode()
-    doc["serpapi_hint"] = "…" + key[-4:]
+    doc[kind] = _fernet().encrypt(key.encode()).decode()
+    doc[kind + "_hint"] = "…" + key[-4:]
     st.put_json(DOC, doc)
 
 
-def remove_serpapi_key(st):
+def remove_key(st, kind: str):
     doc = st.get_json(DOC) or {}
-    doc.pop("serpapi", None)
-    doc.pop("serpapi_hint", None)
+    doc.pop(kind, None)
+    doc.pop(kind + "_hint", None)
     st.put_json(DOC, doc)
 
 
-def get_serpapi_key(st) -> str:
+def get_key(st, kind: str) -> str:
     doc = st.get_json(DOC) or {}
-    if not doc.get("serpapi"):
+    if not doc.get(kind):
         return ""
     from cryptography.fernet import InvalidToken
     try:
-        return _fernet().decrypt(doc["serpapi"].encode()).decode()
+        return _fernet().decrypt(doc[kind].encode()).decode()
     except InvalidToken:
-        raise SecretsError("Your saved SerpApi key can't be decrypted (SECRETS_KEY changed?). Save it again in Settings.") from None
+        raise SecretsError(f"Your saved {kind} key can't be decrypted (SECRETS_KEY changed?). Save it again in Settings.") from None
 
 
-def hint(st) -> str:
-    return (st.get_json(DOC) or {}).get("serpapi_hint", "")
+def key_hint(st, kind: str) -> str:
+    return (st.get_json(DOC) or {}).get(kind + "_hint", "")
 
 
-def key_for_run(st, multi_user: bool, is_admin: bool) -> tuple:
-    """(key, source) where source is "own" | "server" | "none"."""
-    own = get_serpapi_key(st) if st is not None else ""
+def key_for(st, kind: str, multi_user: bool, is_admin: bool) -> tuple:
+    """(key, source) where source is "own" | "server" | "none". Server keys are for admins only in multi-user mode."""
+    own = get_key(st, kind) if st is not None else ""
     if own:
         return own, "own"
-    server = os.environ.get("SERPAPI_KEY", "").strip()
+    server = next((os.environ[e].strip() for e in KINDS[kind]["env"] if os.environ.get(e, "").strip()), "")
     if server and (not multi_user or is_admin):
         return server, "server"
     return "", "none"
+
+
+# SerpApi-specific names used elsewhere
+save_serpapi_key = lambda st, key: save_key(st, "serpapi", key)          # noqa: E731
+remove_serpapi_key = lambda st: remove_key(st, "serpapi")                 # noqa: E731
+get_serpapi_key = lambda st: get_key(st, "serpapi")                       # noqa: E731
+hint = lambda st: key_hint(st, "serpapi")                                 # noqa: E731
+key_for_run = lambda st, multi_user, is_admin: key_for(st, "serpapi", multi_user, is_admin)  # noqa: E731

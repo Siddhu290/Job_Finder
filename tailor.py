@@ -74,14 +74,14 @@ def guard(result: dict, resume: str) -> dict:
             "draft": draft, "warnings": warnings}
 
 
-def tailor(resume: str, job_title: str, company: str, description: str) -> dict:
+def tailor(resume: str, job_title: str, company: str, description: str, api_key: str | None = None) -> dict:
     resume = (resume or "").strip()[:llm.MAX_RESUME_CHARS]
     if len(resume) < 200:
         raise llm.LLMError("Resume text is missing or too short; upload your resume in Resume Lab first")
     if len((description or "").strip()) < 100:
         raise llm.LLMError("This job has no stored description to tailor against; open the listing and paste it")
     user = f"<job title>{job_title}</job title>\n<company>{company}</company>\n<job>\n{description[:MAX_JOB_CHARS]}\n</job>\n<resume>\n{resume}\n</resume>"
-    return guard(llm.chat_json(SYSTEM, user), resume)
+    return guard(llm.chat_json(SYSTEM, user, api_key), resume)
 
 
 def to_docx(text: str) -> bytes:

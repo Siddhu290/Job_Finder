@@ -51,7 +51,7 @@ class handler(BaseHTTPRequestHandler):
             st = webapi.store(self)
             c = profiles.load(st.get_json("_profile"))
             if text is not None:
-                profiles.add(c, llm.extract_profile(text), body.get("name", ""))
+                profiles.add(c, llm.extract_profile(text, webapi.llm_key(self, st) or None), body.get("name", ""))
             elif action == "update":
                 profiles.update(c, str(body.get("id")), body)
             elif action == "activate" and any(p["id"] == body.get("id") for p in c["profiles"]):

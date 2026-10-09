@@ -39,7 +39,7 @@ def test_tailor_requires_resume_and_job_text(monkeypatch):
         tailor.tailor("short", "DA", "Acme", JOB)
     with pytest.raises(llm.LLMError, match="no stored description"):
         tailor.tailor(RESUME, "DA", "Acme", "")
-    monkeypatch.setattr(llm, "chat_json", lambda system, user: {"summary": "ok", "draft": RESUME})
+    monkeypatch.setattr(llm, "chat_json", lambda system, user, *a: {"summary": "ok", "draft": RESUME})
     assert tailor.tailor(RESUME, "DA", "Acme", JOB)["warnings"] == []
 
 
@@ -91,7 +91,7 @@ def test_tailor_api(monkeypatch):
     st = type("S", (), {"read": lambda self, *t: {"Jobs": [{"Job ID": "J1", "Job Title": "Junior Data Analyst", "Company": "Acme"}],
                                                    "Details": [{"Job ID": "J1", "Description": JOB}]}})()
     monkeypatch.setattr(webapi, "store", lambda *a: st)
-    monkeypatch.setattr(llm, "chat_json", lambda s, u: {"summary": "Fresher analyst", "draft": RESUME, "keywords": ["Tableau"]})
+    monkeypatch.setattr(llm, "chat_json", lambda s, u, *a: {"summary": "Fresher analyst", "draft": RESUME, "keywords": ["Tableau"]})
     key = {"X-Dashboard-Key": "pw"}
     assert post(tailor_api.handler, {}, {"job_id": "J1"})[0] == 401
     assert post(tailor_api.handler, key, {"job_id": "J9", "resume_text": RESUME})[0] == 404

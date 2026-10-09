@@ -32,13 +32,15 @@ class handler(BaseHTTPRequestHandler):
             return webapi.send(self, 429, {"error": "Too many requests; wait a minute"})
         from integrations.google_sheets import SheetsError
         try:
-            data = webapi.store(self).read("Jobs", "Details")
+            st = webapi.store(self)
+            data = st.read("Jobs", "Details")
             jid = str(body.get("job_id", ""))
             job = next((r for r in data["Jobs"] if r.get("Job ID") == jid), None)
             if not job:
                 return webapi.send(self, 404, {"error": "Job not found"})
             desc = str(body.get("job_text") or "") or next((d.get("Description", "") for d in data["Details"] if d.get("Job ID") == jid), "")
-            out = tailor.tailor(str(body.get("resume_text", "")), job.get("Job Title", ""), job.get("Company", ""), desc)
+            out = tailor.tailor(str(body.get("resume_text", "")), job.get("Job Title", ""), job.get("Company", ""), desc,
+                                webapi.llm_key(self, st) or None)
             return webapi.send(self, 200, out)
         except llm.LLMError as e:
             return webapi.send(self, 502, {"error": str(e)})

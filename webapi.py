@@ -191,6 +191,16 @@ def serpapi_key(h, st=None) -> str:
         return ""
 
 
+def llm_key(h, st=None) -> str:
+    """The user's own Groq key, else the server key (admins only in multi-user mode); '' if none."""
+    import user_secrets
+    from storage import backend
+    try:
+        return user_secrets.key_for(st or store(h), "groq", backend.is_pg(), user_of(h)["role"] == "admin")[0]
+    except Exception:
+        return ""
+
+
 def resume_args(st) -> list:
     """CLI arguments for the active resume profile when 'use in searches' is on."""
     import profiles

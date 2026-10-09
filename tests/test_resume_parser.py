@@ -70,7 +70,7 @@ def test_upload_endpoint_returns_text_but_never_stores_it(monkeypatch):
     st = MemStore()
     monkeypatch.setattr(webapi, "store", lambda *a: st)
     seen = {}
-    monkeypatch.setattr(llm, "extract_profile", lambda text: seen.setdefault("t", text) and llm.clean_profile({"roles": ["Data Analyst"]}))
+    monkeypatch.setattr(llm, "extract_profile", lambda text, *a: seen.setdefault("t", text) and llm.clean_profile({"roles": ["Data Analyst"]}))
     body = {"file": base64.b64encode(make_pdf("Fresher Data Analyst with Python SQL " * 3)).decode(), "filename": "cv.pdf", "name": "CV"}
     code, out = post(resume.handler, {"X-Dashboard-Key": "pw"}, body)
     assert code == 200 and "Python SQL" in out["text"] and "Python SQL" in seen["t"]

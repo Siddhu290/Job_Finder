@@ -113,11 +113,14 @@ def all_skills(profile: dict) -> list:
     return out
 
 
-def chat_json(system: str, user: str) -> dict:
-    """One JSON-mode chat completion. Raises LLMError with a safe message."""
-    key = os.environ.get("LLM_API_KEY") or os.environ.get("GROQ_API_KEY")
+NO_KEY = "Add your free Groq API key in Settings → API keys (get one at https://console.groq.com/keys)"
+
+
+def chat_json(system: str, user: str, api_key: str | None = None) -> dict:
+    """One JSON-mode chat completion with the user's key (or the server's). Raises LLMError with a safe message."""
+    key = api_key or os.environ.get("LLM_API_KEY") or os.environ.get("GROQ_API_KEY")
     if not key:
-        raise LLMError("LLM_API_KEY is not set (get a free key at https://console.groq.com/keys)")
+        raise LLMError(NO_KEY)
     http_client.register_secret(key)
     base = os.environ.get("LLM_BASE_URL", DEFAULT_BASE).rstrip("/")
     try:
@@ -128,7 +131,7 @@ def chat_json(system: str, user: str) -> dict:
     except requests.RequestException as e:
         raise LLMError(f"Could not reach the LLM API ({type(e).__name__})") from None
     if r.status_code == 401:
-        raise LLMError("The LLM API rejected LLM_API_KEY")
+        raise LLMError("Groq rejected the API key; check or replace it in Settings → API keys")
     if r.status_code >= 400:
         raise LLMError(f"LLM API error (HTTP {r.status_code})")
     try:
@@ -140,13 +143,23 @@ def chat_json(system: str, user: str) -> dict:
     return out
 
 
-def extract_profile(resume_text: str) -> dict:
+def extract_profile(resume_text: str, api_key: str | None = None) -> dict:
     text = (resume_text or "").strip()[:MAX_RESUME_CHARS]
-    if not (os.environ.get("LLM_API_KEY") or os.environ.get("GROQ_API_KEY")):
-        raise LLMError("LLM_API_KEY is not set (get a free key at https://console.groq.com/keys)")
+    if not (api_key or os.environ.get("LLM_API_KEY") or os.environ.get("GROQ_API_KEY")):
+        raise LLMError(NO_KEY)
     if len(text) < 200:
         raise LLMError("The resume text is too short. Upload a text-based PDF/DOCX, or paste the text.")
-    profile = clean_profile(chat_json(SYSTEM, f"<resume>\n{text}\n</resume>"))
+    profile = clean_profile(chat_json(SYSTEM, f"<resume>\n{text}\n</resume>", api_key))
     if not profile["roles"]:
         raise LLMError("No job roles could be identified from this resume")
     return profile
+
+
+def test_key(key: str) -> bool:
+    """Is this Groq key accepted? Lists models (free; uses no tokens)."""
+    base = os.environ.get("LLM_BASE_URL", DEFAULT_BASE).rstrip("/")
+    try:
+        r = requests.get(f"{base}/models", headers={"Authorization": f"Bearer {key}"}, timeout=10)
+        return r.status_code == 200
+    except requests.RequestException:
+        return False

@@ -54,7 +54,7 @@ def test_llm_failures(monkeypatch, code, content, msg):
 def test_missing_key_and_short_text(monkeypatch):
     monkeypatch.delenv("LLM_API_KEY", raising=False)
     monkeypatch.delenv("GROQ_API_KEY", raising=False)
-    with pytest.raises(llm.LLMError, match="LLM_API_KEY"):
+    with pytest.raises(llm.LLMError, match="Groq API key"):
         llm.extract_profile(RESUME)
     monkeypatch.setenv("LLM_API_KEY", "k" * 20)
     with pytest.raises(llm.LLMError, match="too short"):
@@ -81,7 +81,7 @@ def test_resume_api_profiles_lifecycle(monkeypatch):
     monkeypatch.setenv("DASHBOARD_PASSWORD", "pw")
     st = MemStore()
     monkeypatch.setattr(webapi, "store", lambda *a: st)
-    monkeypatch.setattr(llm, "extract_profile", lambda text: llm.clean_profile(
+    monkeypatch.setattr(llm, "extract_profile", lambda text, *a: llm.clean_profile(
         {"roles": ["Data Analyst"], "skills": ["SQL"], "projects": [{"name": "Sales dashboard", "summary": "Power BI", "skills": ["Power BI"]}]}))
     key = {"X-Dashboard-Key": "pw"}
     assert post(resume.handler, {}, {"text": RESUME})[0] == 401
