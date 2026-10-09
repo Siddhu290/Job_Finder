@@ -90,3 +90,15 @@ remove_serpapi_key = lambda st: remove_key(st, "serpapi")                 # noqa
 get_serpapi_key = lambda st: get_key(st, "serpapi")                       # noqa: E731
 hint = lambda st: key_hint(st, "serpapi")                                 # noqa: E731
 key_for_run = lambda st, multi_user, is_admin: key_for(st, "serpapi", multi_user, is_admin)  # noqa: E731
+
+
+def encrypt_text(text: str) -> str:
+    return _fernet().encrypt((text or "").encode()).decode()
+
+
+def decrypt_text(token: str) -> str:
+    from cryptography.fernet import InvalidToken
+    try:
+        return _fernet().decrypt((token or "").encode()).decode()
+    except InvalidToken:
+        raise SecretsError("This resume can't be decrypted (SECRETS_KEY changed?)") from None

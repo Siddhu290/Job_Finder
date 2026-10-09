@@ -1,5 +1,5 @@
 """/api/tailor (authenticated). Drafts only; nothing is stored or sent anywhere.
-POST {"job_id": "...", "resume_text": "..."}       -> suggestions + tailored draft (with truthfulness warnings)
+POST {"job_id" | "job_text"+"job_title", "resume_id" | "resume_text"} -> suggestions + tailored draft (truthfulness warnings)
 POST {"action": "docx", "text": "...", "name": ""}  -> the given draft as a .docx download"""
 import os
 import re
@@ -36,10 +36,18 @@ class handler(BaseHTTPRequestHandler):
             data = st.read("Jobs", "Details")
             jid = str(body.get("job_id", ""))
             job = next((r for r in data["Jobs"] if r.get("Job ID") == jid), None)
-            if not job:
+            if not job and not body.get("job_text"):
                 return webapi.send(self, 404, {"error": "Job not found"})
+            job = job or {"Job Title": str(body.get("job_title", ""))[:120], "Company": ""}
             desc = str(body.get("job_text") or "") or next((d.get("Description", "") for d in data["Details"] if d.get("Job ID") == jid), "")
-            out = tailor.tailor(str(body.get("resume_text", "")), job.get("Job Title", ""), job.get("Company", ""), desc,
+            text = str(body.get("resume_text", ""))
+            if body.get("resume_id"):
+                import resumes
+                try:
+                    text = resumes.get_text(st, str(body["resume_id"]))
+                except KeyError:
+                    return webapi.send(self, 404, {"error": "No such resume"})
+            out = tailor.tailor(text, job.get("Job Title", ""), job.get("Company", ""), desc,
                                 webapi.llm_key(self, st) or None)
             return webapi.send(self, 200, out)
         except llm.LLMError as e:

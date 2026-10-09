@@ -101,6 +101,8 @@ def build(b: dict, today: date | None = None) -> dict:
                              "history": [{"time": v.get("Timestamp", ""), "status": v.get("Status", ""), "reason": v.get("Reason", "")[:200]} for v in vs[-6:]],
                              "retry": last.get("Retry") == "yes"},
             "match": match, "closes": d.get("Closes", ""), "contacts": contacts(row, d),
+            "skills": {"required": analysis["required"], "preferred": analysis["preferred"], "education": analysis["education"]},
+            "responsibilities": matching.responsibilities(d.get("Description", "")),
             "application": {**{k: app.get(k, "") for k in applications.FIELDS}, "Stage": applications.stage_of(app, row.get("Verification Status", ""))},
             "linkedin": "https://www.linkedin.com/search/results/people/?origin=GLOBAL_SEARCH_HEADER&keywords="
                         + quote(f'"{company}" (HR OR recruiter OR "talent acquisition" OR "human resources")') if company else "",

@@ -126,7 +126,7 @@ Exit codes:
 ```bash
 .venv/bin/python -m pytest -q
 ```
-The suite has 221 tests and needs no network. `tests/test_postgres.py` starts its **own throwaway Postgres**
+The suite has 232 tests and needs no network. `tests/test_postgres.py` starts its **own throwaway Postgres**
 from local server binaries (`/usr/lib/postgresql/*/bin`), applies the real migrations and connects as a
 non-superuser role. If no Postgres binaries are installed, those 12 tests are skipped.
 
@@ -200,6 +200,35 @@ Built-in protections:
 
   Export to DOCX or print to PDF. Approving a draft links that version to the application.
 
+## 8b. ATS check, resume collection, API keys
+
+- **My resumes** (Resume Lab): every upload, pasted version and approved tailored draft is saved under its own
+  name (up to 20), encrypted with `SECRETS_KEY` and visible only to its owner. Pick any of them at any time, and
+  rename, download (DOCX) or delete it.
+- **ATS check:** score a resume against a saved job or a pasted job description. Weights:
+
+  | JD keywords | Job title | Sections | Measurable results | Action verbs | Length | Contact |
+  |---|---|---|---|---|---|---|
+  | 40 | 10 | 15 | 10 | 10 | 10 | 5 |
+
+  You get matched and missing keywords, prioritised suggestions, and optional AI suggestions plus a tailored draft
+  (Groq), which you can save as a new version. Missing skills are always "add only if true".
+- **Job cards** show the key responsibilities and the skills needed (required / nice to have), extracted from the
+  job description, next to **Apply now**. The green button means verified; dashed means not verified.
+- **API keys** (Settings): each user saves their own **SerpApi** key (job search) and **Groq** key (resume AI),
+  with links to get free keys. Keys are tested with the provider before saving, encrypted, and never shown in full.
+
+## Future scope
+
+- **One-click "Apply" with a tailored resume.** Pressing *Apply now* on a job will:
+  1. tailor the user's chosen resume to that job's description;
+  2. show the final draft for review;
+  3. save it as a named version linked to the application;
+  4. let the user download it (DOCX/PDF) before opening the employer's apply page.
+
+  The user always submits the application themselves.
+- **Password reset by email**, which needs an email provider.
+
 ## 9. Security & privacy
 
 - **Secrets stay on the server.** Logs redact keys. `/api/health` shows presence only.
@@ -268,5 +297,5 @@ routes/         jobs run action application resume tailor settings analytics log
 public/         index.html app.css app.js
 prisma/         schema.prisma, migrations/
 scheduler/      setup_schedule.sh (systemd)
-tests/          221 tests
+tests/          232 tests
 ```

@@ -148,3 +148,31 @@ def score(job: dict, analysis: dict, profile: dict, search: "filters.SearchProfi
     return {"overall": overall, "eligible": eligible, "components": {k: (None if v is None else round(v, 2)) for k, v in comp.items()},
             "weights": WEIGHTS, "matched": matched, "missing_required": missing_req, "missing_preferred": missing_pref,
             "mandatory_failures": mandatory_fail, "reasons": why, "next_action": action}
+
+
+_RESP_HEAD = re.compile(r"(key\s+)?responsibilit|what\s+you('ll|\s+will)\s+do|your\s+role|the\s+role|duties|day[\s-]to[\s-]day|you\s+will\b", re.I)
+_OTHER_HEAD = re.compile(r"requirement|qualification|what\s+you('ll)?\s+need|skills|must[\s-]have|nice[\s-]to[\s-]have|"
+                         r"benefit|perks|about\s+(us|the\s+company)|who\s+you\s+are|eligibility|why\s+join", re.I)
+_DOING = re.compile(r"^(analy[sz]e|build|clean|collaborate|create|design|develop|document|ensure|extract|gather|help|identify|"
+                    r"maintain|monitor|perform|prepare|present|support|transform|work|write|automate|manage|conduct|assist|"
+                    r"generate|translate|validate|query|visuali[sz]e|report|own|partner|participate)\b", re.I)
+
+
+def responsibilities(description: str, limit: int = 5) -> list:
+    """Key responsibilities from a job description: the lines under a 'Responsibilities / What you'll do'
+    heading, else sentences that start with an action. Text is the employer's own, shortened."""
+    lines = [l.strip(" -•*▪●◦\t") for l in re.split(r"\n|(?<=[.;])\s+(?=[A-Z])", description or "") if l.strip()]
+    out, inside = [], False
+    for l in lines:
+        if len(l) < 60 and _RESP_HEAD.search(l):
+            inside = True
+            continue
+        if inside and len(l) < 60 and _OTHER_HEAD.search(l):
+            break
+        if inside and 25 <= len(l) <= 300:
+            out.append(l)
+        if len(out) == limit:
+            break
+    if not out:
+        out = [l for l in lines if _DOING.match(l) and 25 <= len(l) <= 300][:limit]
+    return [(l[:157] + "…") if len(l) > 160 else l for l in out]

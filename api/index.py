@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import webapi  # noqa: E402
 
 ROUTES = {"jobs", "run", "action", "application", "resume", "tailor", "settings", "analytics",
-          "login", "register", "account", "serpapi", "sheet", "health"}
+          "login", "register", "account", "serpapi", "sheet", "health", "keys", "resumes", "ats"}
 
 
 def route_name(path: str) -> str:

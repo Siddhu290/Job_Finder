@@ -49,3 +49,21 @@ def test_verified_strong_match_says_apply():
 def test_no_skills_in_job_drops_that_weight():
     r = score(job(description="Data Analyst fresher role. 0-1 years."), analyze_job("Data Analyst fresher role. 0-1 years."), PROFILE, PUNE)
     assert r["components"]["required_skills"] is None and r["overall"] == 100
+
+
+def test_responsibilities_extraction():
+    from matching import responsibilities
+    jd = """About us
+We are a fintech.
+Key Responsibilities:
+- Build and maintain dashboards in Power BI for the sales team
+- Write SQL queries to extract and clean transaction data
+- Present weekly insights to business stakeholders
+Requirements:
+- 0-1 years experience, SQL, Python"""
+    r = responsibilities(jd)
+    assert r == ["Build and maintain dashboards in Power BI for the sales team",
+                 "Write SQL queries to extract and clean transaction data",
+                 "Present weekly insights to business stakeholders"]
+    assert responsibilities("Analyze customer churn data using Python every week. We offer great perks.")[0].startswith("Analyze")
+    assert responsibilities("") == []

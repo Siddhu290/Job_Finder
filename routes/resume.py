@@ -64,7 +64,15 @@ class handler(BaseHTTPRequestHandler):
                 return webapi.send(self, 400, {"error": "Unknown resume action"})
             st.put_json("_profile", c)
             webapi.audit(st, "resume", action or "create", "")
-            return webapi.send(self, 200, {**c, "text": text} if text is not None else c)
+            saved = None
+            if text is not None:   # every upload also goes into the user's named resume collection
+                import resumes
+                try:
+                    saved = resumes.save(st, body.get("name") or profiles.active(c)["name"], text,
+                                         "upload" if body.get("file") else "pasted")
+                except (resumes.ResumeError, ValueError):
+                    saved = None
+            return webapi.send(self, 200, {**c, "text": text, "version": saved} if text is not None else c)
         except resume_parser.ResumeFileError as e:
             return webapi.send(self, 400, {"error": str(e)})
         except (llm.LLMError, ValueError) as e:
