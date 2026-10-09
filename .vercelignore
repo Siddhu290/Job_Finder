@@ -1,0 +1,21 @@
+.env
+.env.*
+!.env.example
+credentials.json
+*.pem
+*.key
+*service-account*.json
+fresher-job-finder-*.json
+.venv/
+.cache/
+logs/
+tests/
+scheduler/
+__pycache__/
+.pytest_cache/
+# Prisma (schema + migrations) runs from your machine, not on Vercel
+package.json
+package-lock.json
+node_modules/
+prisma/
+manage.py

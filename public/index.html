@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fresher Data Jobs</title>
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<div id="gate" class="gate" hidden>
+  <h1>Fresher Data Jobs</h1>
+  <p class="sub" id="gateSub">Sign in. Your session lasts 12 hours.</p>
+  <form id="gateForm">
+    <div id="regFields" hidden>
+      <label class="f" for="rname">Your name</label><input id="rname" type="text" autocomplete="name">
+      <label class="f" for="invite">Invite code</label><input id="invite" type="text" autocomplete="off">
+    </div>
+    <div id="emailField" hidden><label class="f" for="email">Email</label><input id="email" type="email" autocomplete="username"></div>
+    <label class="f" for="pw">Password</label>
+    <input id="pw" type="password" autocomplete="current-password" required>
+    <div class="err" id="gateErr" role="alert"></div>
+    <button class="btn primary" type="submit" id="gateBtn" style="width:100%;justify-content:center">Sign in</button>
+    <p class="sub" id="regToggle" hidden><button type="button" class="btn link" id="regLink">Have an invite code? Create an account</button></p>
+  </form>
+</div>
+<div id="app" class="layout" hidden>
+  <nav class="side" id="nav" aria-label="Sections"></nav>
+  <main id="main" tabindex="-1"></main>
+</div>
+<dialog id="dlg" aria-label="Application details"></dialog>
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+<script src="app.js"></script>
+</body>
+</html>

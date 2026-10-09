@@ -1,0 +1,205 @@
+// Single source of truth for the Postgres (Neon) schema.
+// Migrations: prisma/migrations (generated with `prisma migrate diff`, plus a hand-written row-level-security migration).
+// The Python app talks to this database with psycopg; Prisma is only used for schema + migrations.
+// Every user-owned table has user_id and is protected by Postgres row-level security (see 0002_row_level_security).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL") // Neon: pooled URL for the app, direct URL for migrations
+}
+
+model User {
+  id             String    @id @default(uuid()) @db.Uuid
+  email          String    @unique
+  name           String    @default("")
+  passwordHash   String    @map("password_hash")
+  role           String    @default("user") // "user" | "admin"
+  sessionVersion Int       @default(1) @map("session_version") // bump to sign the user out everywhere
+  failedLogins   Int       @default(0) @map("failed_logins")
+  lockedUntil    DateTime? @map("locked_until") @db.Timestamptz
+  disabled       Boolean   @default(false)
+  lastRunAt      DateTime? @map("last_run_at") @db.Timestamptz
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  jobs         Job[]
+  details      JobDetail[]
+  verification Verification[]
+  applications Application[]
+  history      HistoryEntry[]
+  runs         Run[]
+  docs         UserDoc[]
+  lock         RunLock?
+
+  @@map("users")
+}
+
+/// One row per vacancy per user. Columns mirror the Google Sheets "Jobs" layout so Sheets stays a drop-in export.
+model Job {
+  userId        String   @map("user_id") @db.Uuid
+  jobId         String   @map("job_id")
+  seq           BigInt   @default(autoincrement()) // stable display order (like sheet row order)
+  dateFound     String   @default("") @map("date_found")
+  title         String   @default("")
+  company       String   @default("")
+  location      String   @default("")
+  experience    String   @default("")
+  employmentType String  @default("") @map("employment_type")
+  source        String   @default("")
+  listingUrl    String   @default("") @map("listing_url")
+  careersUrl    String   @default("") @map("careers_url")
+  applyUrl      String   @default("") @map("apply_url")
+  status        String   @default("") // Verification status: Verified | Needs Review | Rejected | Closed (or legacy user values)
+  postedDate    String   @default("") @map("posted_date")
+  lastChecked   String   @default("") @map("last_checked")
+  notes         String   @default("")
+  archived      Boolean  @default(false)
+  updatedAt     DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, jobId])
+  @@index([userId, archived, seq])
+  @@index([userId, dateFound])
+  @@map("jobs")
+}
+
+model JobDetail {
+  userId          String   @map("user_id") @db.Uuid
+  jobId           String   @map("job_id")
+  updated         String   @default("")
+  description     String   @default("")
+  requiredSkills  String   @default("") @map("required_skills")
+  preferredSkills String   @default("") @map("preferred_skills")
+  minYears        String   @default("") @map("min_years")
+  education       String   @default("")
+  closes          String   @default("")
+  contacts        Json     @default("[]")
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, jobId])
+  @@map("job_details")
+}
+
+model Verification {
+  id            BigInt  @id @default(autoincrement())
+  userId        String  @map("user_id") @db.Uuid
+  jobId         String  @map("job_id")
+  timestamp     String  @default("")
+  runId         String  @default("") @map("run_id")
+  status        String  @default("")
+  reqId         String  @default("") @map("req_id")
+  reason        String  @default("")
+  checks        Json    @default("{}")
+  lastOpenCheck String  @default("") @map("last_open_check")
+  retry         Boolean @default(false)
+  attempts      Int     @default(0)
+  nextCheck     String  @default("") @map("next_check")
+  user          User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, jobId, id])
+  @@map("verification")
+}
+
+model Application {
+  userId         String @map("user_id") @db.Uuid
+  jobId          String @map("job_id")
+  stage          String @default("")
+  savedDate      String @default("") @map("saved_date")
+  appliedDate    String @default("") @map("applied_date")
+  deadline       String @default("")
+  followUpDate   String @default("") @map("follow_up_date")
+  assessmentDate String @default("") @map("assessment_date")
+  interviewDate  String @default("") @map("interview_date")
+  offerDetails   String @default("") @map("offer_details")
+  recruiter      String @default("")
+  resumeVersion  String @default("") @map("resume_version")
+  notes          String @default("")
+  followUpDone   String @default("") @map("follow_up_done")
+  updatedAt      String @default("") @map("updated_at")
+  user           User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, jobId])
+  @@map("applications")
+}
+
+/// Audit trail and undo log. (user_id, action_id) is unique: a retried request can never apply twice.
+model HistoryEntry {
+  id        BigInt @id @default(autoincrement())
+  userId    String @map("user_id") @db.Uuid
+  timestamp String @default("")
+  jobId     String @default("") @map("job_id")
+  field     String @default("")
+  old       String @default("")
+  new       String @default("")
+  actionId  String @map("action_id")
+  source    String @default("")
+  user      User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, actionId])
+  @@index([userId, jobId, id])
+  @@map("history")
+}
+
+model Run {
+  runId           String @id @map("run_id")
+  userId          String @map("user_id") @db.Uuid
+  started         String @default("")
+  finished        String @default("")
+  trigger         String @default("")
+  profile         String @default("")
+  allowedSearches Int    @default(0) @map("allowed_searches")
+  serpapiCalls    Int    @default(0) @map("serpapi_calls")
+  discovered      Int    @default(0)
+  uniqueJobs      Int    @default(0) @map("unique_jobs")
+  newRows         Int    @default(0) @map("new_rows")
+  verified        Int    @default(0)
+  needsReview     Int    @default(0) @map("needs_review")
+  errors          Int    @default(0)
+  status          String @default("")
+  user            User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, started])
+  @@map("runs")
+}
+
+/// Per-user JSON documents: kind = "_settings" | "_profile".
+model UserDoc {
+  userId String @map("user_id") @db.Uuid
+  kind   String
+  value  Json   @default("{}")
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, kind])
+  @@map("user_docs")
+}
+
+/// One run at a time per user; acquired atomically with INSERT .. ON CONFLICT .. WHERE expires_at < now().
+model RunLock {
+  userId    String   @id @map("user_id") @db.Uuid
+  runId     String   @map("run_id")
+  expiresAt DateTime @map("expires_at") @db.Timestamptz
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("run_locks")
+}
+
+/// Shared, non-personal: employer website / HR look-ups (saves SerpApi credits across users).
+model CompanyCache {
+  key     String   @id
+  value   Json
+  updated DateTime @default(now()) @updatedAt @db.Timestamptz
+
+  @@map("company_cache")
+}
+
+/// Shared SerpApi usage per month across all users (one account, one quota).
+model SerpapiUsage {
+  month String @id // "YYYY-MM:<key fingerprint>" (usage per SerpApi account, never the key itself)
+  calls Int    @default(0)
+
+  @@map("serpapi_usage")
+}

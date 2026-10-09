@@ -1,0 +1,13 @@
+{
+  "name": "fresher-job-finder",
+  "private": true,
+  "description": "Prisma is used only for the Postgres schema and migrations; the app itself is Python.",
+  "scripts": {
+    "db:validate": "prisma validate",
+    "db:migrate": "prisma migrate deploy",
+    "db:status": "prisma migrate status"
+  },
+  "devDependencies": {
+    "prisma": "6.19.3"
+  }
+}

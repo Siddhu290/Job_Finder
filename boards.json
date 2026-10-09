@@ -1,0 +1,21 @@
+[
+  {"company": "Groww", "ats": "greenhouse", "board": "groww"},
+  {"company": "InMobi", "ats": "greenhouse", "board": "inmobi"},
+  {"company": "Druva", "ats": "greenhouse", "board": "druva"},
+  {"company": "Rubrik", "ats": "greenhouse", "board": "rubrik"},
+  {"company": "Databricks", "ats": "greenhouse", "board": "databricks"},
+  {"company": "Stripe", "ats": "greenhouse", "board": "stripe"},
+  {"company": "Zscaler", "ats": "greenhouse", "board": "zscaler"},
+  {"company": "HackerRank", "ats": "greenhouse", "board": "hackerrank"},
+  {"company": "Sigmoid", "ats": "greenhouse", "board": "sigmoid"},
+  {"company": "Meesho", "ats": "lever", "board": "meesho"},
+  {"company": "CRED", "ats": "lever", "board": "cred"},
+  {"company": "Zeta", "ats": "lever", "board": "zeta"},
+  {"company": "Paytm", "ats": "lever", "board": "paytm"},
+  {"company": "Hevo Data", "ats": "lever", "board": "hevodata"},
+  {"company": "Mindtickle", "ats": "lever", "board": "mindtickle"},
+  {"company": "Atlan", "ats": "ashby", "board": "atlan"},
+  {"company": "Sarvam AI", "ats": "ashby", "board": "sarvam"},
+  {"company": "Nike", "ats": "workday", "board": "nike", "host": "nike.wd1.myworkdayjobs.com", "site": "nke"},
+  {"company": "Nvidia", "ats": "workday", "board": "nvidia", "host": "nvidia.wd5.myworkdayjobs.com", "site": "NVIDIAExternalCareerSite"}
+]

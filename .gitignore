@@ -1,0 +1,19 @@
+# secrets
+.env
+credentials.json
+*.pem
+*.key
+token.json
+*service-account*.json
+# environment / build
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+# runtime data (may contain URLs, evidence, lock files)
+logs/
+*.log
+.cache/
+*.tmp
+node_modules/
+.vercel/
