@@ -9,6 +9,7 @@ import webapi  # noqa: E402
 
 SINGLE_USER = ("SERPAPI_KEY", "GOOGLE_SHEET_ID", "DASHBOARD_PASSWORD")
 MULTI_USER = ("DATABASE_URL", "SESSION_SECRET", "SECRETS_KEY")
+OPTIONAL = ("CRON_SECRET", "LLM_API_KEY", "INVITE_CODE", "ALLOW_SIGNUP")
 
 
 class handler(BaseHTTPRequestHandler):
@@ -16,10 +17,19 @@ class handler(BaseHTTPRequestHandler):
         from storage import backend
         multi = backend.is_pg()
         required = MULTI_USER if multi else SINGLE_USER
-        cfg = {k: bool(os.environ.get(k)) for k in SINGLE_USER + MULTI_USER + ("CRON_SECRET", "LLM_API_KEY", "INVITE_CODE")}
+        cfg = {k: bool(os.environ.get(k)) for k in SINGLE_USER + MULTI_USER + OPTIONAL}
         cfg["GOOGLE_CREDENTIALS"] = bool(os.environ.get("GOOGLE_CREDENTIALS_JSON") or os.environ.get("GOOGLE_CREDENTIALS"))
         ok = all(cfg[k] for k in required) and (multi or cfg["GOOGLE_CREDENTIALS"])
-        body = {"ok": ok, "config": cfg, "auth": "users" if multi else "password", "registration": multi and cfg["INVITE_CODE"]}
+        from routes.register import policy
+        body = {"ok": ok, "config": cfg, "auth": "users" if multi else "password",
+                "registration": policy() if multi else "closed"}
+        if multi:
+            try:
+                from storage import pg
+                body["data_isolation"] = pg.rls_status(backend.conn())
+                body["ok"] = body["ok"] and body["data_isolation"] == "enforced"
+            except Exception as e:  # noqa: BLE001
+                body["data_isolation"], body["ok"] = f"database unreachable ({type(e).__name__})", False
         if webapi.authorized(self):
             try:
                 webapi.store(self).get_json("_settings")   # proves storage is reachable for this user

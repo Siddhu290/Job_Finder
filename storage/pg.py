@@ -47,9 +47,30 @@ def connect():
     return psycopg.connect(url, row_factory=dict_row, prepare_threshold=None, connect_timeout=10, autocommit=True)
 
 
+def rls_role_available(conn) -> bool:
+    """Is the restricted role from migration 0003 usable by this login? Cached per connection."""
+    if not hasattr(conn, "_jf_rls_role"):
+        r = conn.execute("SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'app_rls') "
+                         "AND pg_has_role(current_user, 'app_rls', 'MEMBER') AS ok").fetchone()
+        conn._jf_rls_role = bool(r and r["ok"])
+    return conn._jf_rls_role
+
+
+def rls_status(conn) -> str:
+    """'enforced' if per-user isolation is guaranteed by Postgres for this connection, else why not."""
+    if rls_role_available(conn):
+        return "enforced"
+    r = conn.execute("SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname = current_user").fetchone()
+    if r and (r["rolsuper"] or r["rolbypassrls"]):
+        return "NOT enforced: the database role bypasses row-level security; run the migrations (0003)"
+    return "enforced"
+
+
 @contextmanager
 def user_tx(conn, user_id):
     with conn.transaction():
+        if rls_role_available(conn):
+            conn.execute("SET LOCAL ROLE app_rls")   # restricted role: RLS applies even if the login role could bypass it
         conn.execute("SELECT set_config('app.user_id', %s, true)", [str(user_id)])
         yield conn
 

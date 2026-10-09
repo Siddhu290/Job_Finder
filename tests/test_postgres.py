@@ -382,3 +382,62 @@ def test_each_user_gets_own_tab_and_sync(db, monkeypatch):
     main.mirror_to_sheet(PgJobs(db.conn(), b), st, "bala@example.com", {"errors": []})
     assert len(synced) == n
     webapi._hits.clear()
+
+
+def test_isolation_holds_even_for_a_bypassrls_login(db, pg, monkeypatch):
+    """Hosted Postgres roles may have BYPASSRLS. Without the restricted role isolation is reported as NOT enforced;
+    with it (migration 0003), every per-user transaction runs as app_rls and stays isolated."""
+    from storage import pg as pgmod
+    from storage.pg import PgJobs
+    a, b = users(db)
+    PgJobs(db.conn(), a).apply([["JA1"] + [""] * 14], [])
+    bypass = pg["app"].replace("app_user", "bypass_user")
+    with psycopg.connect(pg["admin"], autocommit=True) as adm:
+        adm.execute("DROP ROLE IF EXISTS bypass_user; CREATE ROLE bypass_user LOGIN BYPASSRLS; "
+                    "GRANT ALL ON ALL TABLES IN SCHEMA public TO bypass_user; GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO bypass_user")
+    monkeypatch.setenv("DATABASE_URL", bypass)
+    def unfiltered_count(conn):
+        """A buggy query with no WHERE user_id: only row-level security can stop it leaking A's rows to B."""
+        with pgmod.user_tx(conn, b):
+            return conn.execute("SELECT count(*) AS n FROM jobs").fetchone()["n"]
+    c = pgmod.connect()
+    assert pgmod.rls_status(c).startswith("NOT enforced")                       # honest warning
+    assert PgJobs(c, b).read()[1:] == []                                         # app-level user_id filter still holds
+    assert unfiltered_count(c) == 1                                              # ...but a buggy query would leak
+    c.close()
+    with psycopg.connect(pg["admin"], autocommit=True) as adm:
+        adm.execute("GRANT app_rls TO bypass_user")
+    c = pgmod.connect()
+    try:
+        assert pgmod.rls_status(c) == "enforced"
+        assert unfiltered_count(c) == 0                                            # even a buggy query is isolated now
+        assert PgJobs(c, b).read()[1:] == []
+        assert [r[0] for r in PgJobs(c, a).read()[1:]] == ["JA1"]
+    finally:
+        c.close()
+        with psycopg.connect(pg["admin"], autocommit=True) as adm:
+            adm.execute("REVOKE app_rls FROM bypass_user")
+
+
+def test_signup_policy_and_first_admin(db, monkeypatch):
+    import webapi
+    from routes import account, register
+    from tests.test_vercel import call, post
+    webapi._hits.clear()
+    for k in ("ALLOW_SIGNUP", "INVITE_CODE"):
+        monkeypatch.delenv(k, raising=False)
+    body = {"email": "first@example.com", "password": "long enough pass", "name": "First"}
+    assert register.policy() == "closed" and post(register.handler, {}, body)[0] == 403
+    monkeypatch.setenv("ALLOW_SIGNUP", "true")
+    assert register.policy() == "open"
+    code, r = post(register.handler, {}, body)
+    assert code == 200 and r["role"] == "admin"                                  # the first account is the admin
+    code, r2 = post(register.handler, {}, {**body, "email": "second@example.com"})
+    assert code == 200 and r2["role"] == "user"
+    assert post(register.handler, {}, body)[0] == 400                             # email already used
+    me = call(account.handler, {"Authorization": "Bearer " + r2["token"]})[1]
+    assert me["email"] == "second@example.com" and me["role"] == "user"
+    monkeypatch.setenv("INVITE_CODE", "abc-123")
+    assert register.policy() == "invite"
+    assert post(register.handler, {}, {**body, "email": "third@example.com"})[0] == 403
+    webapi._hits.clear()

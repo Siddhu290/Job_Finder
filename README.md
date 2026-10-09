@@ -67,7 +67,7 @@ cp .env.example .env && chmod 600 .env        # fill in values; never commit .en
 
 ### Multi-user (Neon Postgres + Prisma)
 1. Create a Neon project. Copy **both** connection strings: *pooled* goes in `DATABASE_URL` (used by the app),
-   *direct* goes in `DIRECT_URL` (used by migrations).
+   *direct* goes in `DATABASE_URL_UNPOOLED` (used by migrations). Vercel's Neon integration sets both for you.
 2. Generate secrets:
    ```bash
    .venv/bin/python -c "import secrets;print(secrets.token_urlsafe(48))"                                  # SESSION_SECRET
@@ -76,7 +76,7 @@ cp .env.example .env && chmod 600 .env        # fill in values; never commit .en
 3. Apply the schema (Node 18+):
    ```bash
    npm install                       # installs the Prisma CLI (dev only)
-   npx prisma migrate deploy         # applies 0001_init and 0002_row_level_security
+   npx prisma migrate deploy         # applies 0001_init, 0002_row_level_security, 0003_restricted_app_role
    npx prisma migrate status
    ```
 4. Create the first (admin) account. The password is typed at a prompt, never passed as an argument:
@@ -85,8 +85,9 @@ cp .env.example .env && chmod 600 .env        # fill in values; never commit .en
    ```
 5. Optional: copy your existing Google Sheet data into your account. This only reads the sheet:
    `.venv/bin/python manage.py import-sheet you@example.com`
-6. More users: `manage.py create-user friend@example.com`, or set `INVITE_CODE` so people can register
-   with the code. If `GOOGLE_SHEET_ID` and the service-account credentials are set, every new account gets
+6. More users can sign up themselves on the **Create account** page when `ALLOW_SIGNUP=true` (optionally also
+   requiring `INVITE_CODE`). The **first** account becomes the admin. Admins can also use
+   `manage.py create-user friend@example.com`. If `GOOGLE_SHEET_ID` and the service-account credentials are set, every new account gets
    its own tab `Jobs - <email>` in the spreadsheet. Their jobs are copied there after each search, and on
    *Settings → Sync now*. Nothing is ever deleted from a tab. There is no open sign-up, because searches spend SerpApi credits.
    Other admin commands: `list-users`, `disable-user`, `enable-user`, `reset-password`.

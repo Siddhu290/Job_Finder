@@ -13,20 +13,19 @@
 <body>
 <a class="skip" href="#main">Skip to content</a>
 <div id="gate" class="gate" hidden>
-  <h1>Fresher Data Jobs</h1>
-  <p class="sub" id="gateSub">Sign in. Your session lasts 12 hours.</p>
-  <form id="gateForm">
-    <div id="regFields" hidden>
-      <label class="f" for="rname">Your name</label><input id="rname" type="text" autocomplete="name">
-      <label class="f" for="invite">Invite code</label><input id="invite" type="text" autocomplete="off">
-    </div>
-    <div id="emailField" hidden><label class="f" for="email">Email</label><input id="email" type="email" autocomplete="username"></div>
+  <h1 id="gateTitle">Sign in</h1>
+  <p class="sub" id="gateSub"></p>
+  <form id="gateForm" novalidate>
+    <div id="nameField" hidden><label class="f" for="rname">Full name</label><input id="rname" type="text" autocomplete="name" maxlength="80"></div>
+    <div id="emailField" hidden><label class="f" for="email">Email</label><input id="email" type="email" autocomplete="username" maxlength="254"></div>
     <label class="f" for="pw">Password</label>
     <input id="pw" type="password" autocomplete="current-password" required>
+    <div id="pw2Field" hidden><label class="f" for="pw2">Confirm password</label><input id="pw2" type="password" autocomplete="new-password"></div>
+    <div id="inviteField" hidden><label class="f" for="invite">Invite code</label><input id="invite" type="text" autocomplete="off"></div>
     <div class="err" id="gateErr" role="alert"></div>
     <button class="btn primary" type="submit" id="gateBtn" style="width:100%;justify-content:center">Sign in</button>
-    <p class="sub" id="regToggle" hidden><button type="button" class="btn link" id="regLink">Have an invite code? Create an account</button></p>
   </form>
+  <p class="sub" id="gateSwitch" style="text-align:center;margin-top:14px" hidden></p>
 </div>
 <div id="app" class="layout" hidden>
   <nav class="side" id="nav" aria-label="Sections"></nav>

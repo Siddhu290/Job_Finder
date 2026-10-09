@@ -59,37 +59,54 @@ async function api(path, opts = {}) {
 const post = (path, body) => api(path, { method: "POST", body: JSON.stringify(body) });
 const fail = e => { if (e.message !== "unauthorized") toast(e.message, 7000) };
 
-// ---------- sign in / register ----------
-const AUTH = { multi: false, registration: false, registering: false };
+// ---------- sign in / create account ----------
+const AUTH = { multi: false, registration: "closed", page: "login" };
 function showGate(msg = "") {
   $("#app").hidden = true; $("#gate").hidden = false; $("#gateErr").textContent = msg;
+  AUTH.page = location.hash === "#signup" ? "signup" : "login";
   fetch("/api/health").then(r => r.json()).then(h => {
-    AUTH.multi = h.auth === "users"; AUTH.registration = !!h.registration; drawGate();
+    AUTH.multi = h.auth === "users"; AUTH.registration = h.registration || "closed"; drawGate();
   }).catch(drawGate);
 }
 function drawGate() {
-  $("#emailField").hidden = !AUTH.multi; $("#email").required = AUTH.multi;
-  $("#regFields").hidden = !AUTH.registering; $("#regToggle").hidden = !(AUTH.multi && AUTH.registration);
-  $("#regLink").textContent = AUTH.registering ? "Already have an account? Sign in" : "Have an invite code? Create an account";
-  $("#gateBtn").textContent = AUTH.registering ? "Create account" : "Sign in";
-  $("#gateSub").textContent = AUTH.multi ? (AUTH.registering ? "Create your account (password: 10+ characters)." : "Sign in to your account. Sessions last 12 hours.")
-    : "Sign in with the dashboard password. Your session lasts 12 hours.";
-  $("#pw").autocomplete = AUTH.registering ? "new-password" : "current-password";
-  (AUTH.multi ? $("#email") : $("#pw")).focus();
+  const signup = AUTH.multi && AUTH.page === "signup" && AUTH.registration !== "closed";
+  $("#gateTitle").textContent = signup ? "Create your account" : "Sign in";
+  $("#gateSub").textContent = !AUTH.multi ? "Enter the dashboard password. Your session lasts 12 hours."
+    : signup ? "Your jobs, applications and resume stay private to your account." : "Welcome back. Sessions last 12 hours.";
+  $("#nameField").hidden = !signup; $("#emailField").hidden = !AUTH.multi;
+  $("#pw2Field").hidden = !signup; $("#inviteField").hidden = !(signup && AUTH.registration === "invite");
+  $("#pw").autocomplete = signup ? "new-password" : "current-password";
+  $("#pw").placeholder = signup ? "At least 10 characters" : "";
+  $("#gateBtn").textContent = signup ? "Create account" : "Sign in";
+  const sw = $("#gateSwitch");
+  sw.hidden = !(AUTH.multi && AUTH.registration !== "closed");
+  sw.replaceChildren(signup ? "Already have an account? " : "New here? ",
+    el("a", { href: signup ? "#login" : "#signup", onclick(e) { e.preventDefault(); AUTH.page = signup ? "login" : "signup";
+      history.replaceState(null, "", "#" + AUTH.page); $("#gateErr").textContent = ""; drawGate() } }, signup ? "Sign in" : "Create an account"));
+  (AUTH.multi ? (signup ? $("#rname") : $("#email")) : $("#pw")).focus();
 }
-$("#regLink").onclick = () => { AUTH.registering = !AUTH.registering; drawGate() };
 $("#gateForm").onsubmit = async e => {
   e.preventDefault();
-  const btn = $("#gateBtn"); btn.disabled = true; $("#gateErr").textContent = "";
-  const body = AUTH.registering ? { email: $("#email").value, password: $("#pw").value, name: $("#rname").value, invite_code: $("#invite").value }
-    : AUTH.multi ? { email: $("#email").value, password: $("#pw").value } : { password: $("#pw").value };
+  const signup = AUTH.multi && AUTH.page === "signup";
+  const err = m => { $("#gateErr").textContent = m };
+  if (AUTH.multi && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test($("#email").value.trim())) return err("Enter a valid email address");
+  if (signup && $("#pw").value.length < 10) return err("Password must be at least 10 characters");
+  if (signup && $("#pw").value !== $("#pw2").value) return err("The two passwords don't match");
+  if (!$("#pw").value) return err("Enter your password");
+  const btn = $("#gateBtn"); btn.disabled = true; err("");
+  const body = signup ? { name: $("#rname").value.trim(), email: $("#email").value.trim(), password: $("#pw").value, invite_code: $("#invite").value.trim() }
+    : AUTH.multi ? { email: $("#email").value.trim(), password: $("#pw").value } : { password: $("#pw").value };
   try {
-    const r = await fetch(AUTH.registering ? "/api/register" : "/api/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const r = await fetch(signup ? "/api/register" : "/api/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     const d = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(d.error || "Sign-in failed");
-    store.set("session", d.token, sessionStorage); $("#pw").value = ""; AUTH.registering = false;
-    $("#gate").hidden = true; $("#app").hidden = false; load();
-  } catch (err) { $("#gateErr").textContent = err.message } finally { btn.disabled = false }
+    if (!r.ok) throw new Error(d.error || (signup ? "Could not create the account" : "Sign-in failed"));
+    store.set("session", d.token, sessionStorage); $("#pw").value = ""; $("#pw2").value = "";
+    $("#gate").hidden = true; $("#app").hidden = false;
+    if (signup) { S.view = "settings"; history.replaceState(null, "", "#settings");
+      setTimeout(() => toast(`Welcome${d.name ? ", " + d.name : ""}! Add your SerpApi key below to start searching.`, 9000), 600) }
+    else if (["login", "signup"].includes(location.hash.slice(1))) history.replaceState(null, "", "#dashboard");
+    load();
+  } catch (x) { err(x.message) } finally { btn.disabled = false }
 };
 
 // ---------- theme / nav ----------
