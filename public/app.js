@@ -475,7 +475,9 @@ function resumeBody(c) {
       const res = await post("/api/resume", { file: await fileToBase64(f), filename: f.name, name });
       if (res.version) S.resumeId = res.version.id;
       delete res.text; S.profiles = res;
-      toast(res.version ? `Saved as “${res.version.name}” in My resumes. Review the profile below.` : "Profile created. Review it below."); render(); load();
+      if (res.profile_error) toast(`Saved as “${res.version ? res.version.name : "your resume"}” in My resumes, but the AI profile couldn't be built: ${res.profile_error}`, 12000);
+      else toast(res.version ? `Saved as “${res.version.name}” in My resumes. Review the profile below.` : "Profile created. Review it below.");
+      render(); load();
     } catch (err) { fail(err) } finally { e.target.value = "" }
   } });
   const head = el("section", { class: "panel" }, el("div", { class: "row" },

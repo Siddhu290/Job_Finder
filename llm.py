@@ -12,7 +12,10 @@ import requests
 import http_client
 
 DEFAULT_BASE = "https://api.groq.com/openai/v1"
-DEFAULT_MODEL = "llama-3.3-70b-versatile"
+DEFAULT_MODEL = "openai/gpt-oss-120b"
+# Tried in order if the configured model has been retired by the provider (Groq retires models regularly).
+PREFERRED_MODELS = ["openai/gpt-oss-120b", "qwen/qwen3.8-27b", "openai/gpt-oss-20b", "llama-3.3-70b-versatile"]
+_NON_CHAT = ("whisper", "tts", "guard", "orpheus", "playai", "prompt", "allam")
 MAX_RESUME_CHARS = 30_000
 
 SYSTEM = """You extract job-search information from a resume for an Indian job seeker.
@@ -123,17 +126,26 @@ def chat_json(system: str, user: str, api_key: str | None = None) -> dict:
         raise LLMError(NO_KEY)
     http_client.register_secret(key)
     base = os.environ.get("LLM_BASE_URL", DEFAULT_BASE).rstrip("/")
-    try:
-        r = http_client.request("POST", f"{base}/chat/completions", headers={"Authorization": f"Bearer {key}"}, json={
-            "model": os.environ.get("LLM_MODEL", DEFAULT_MODEL), "temperature": 0,
-            "response_format": {"type": "json_object"},
+
+    def call(model):
+        return http_client.request("POST", f"{base}/chat/completions", headers={"Authorization": f"Bearer {key}"}, json={
+            "model": model, "temperature": 0, "response_format": {"type": "json_object"},
             "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]})
+    try:
+        model = os.environ.get("LLM_MODEL") or DEFAULT_MODEL
+        r = call(model)
+        if r.status_code in (400, 404) and _model_gone(r):
+            alt = fallback_model(key, base, exclude=model)
+            if alt:
+                r = call(alt)
     except requests.RequestException as e:
         raise LLMError(f"Could not reach the LLM API ({type(e).__name__})") from None
     if r.status_code == 401:
         raise LLMError("Groq rejected the API key; check or replace it in Settings → API keys")
+    if r.status_code == 429:
+        raise LLMError("The AI is busy (Groq rate limit); try again in a minute")
     if r.status_code >= 400:
-        raise LLMError(f"LLM API error (HTTP {r.status_code})")
+        raise LLMError(f"The AI service returned an error (HTTP {r.status_code}); try again later")
     try:
         out = json.loads(r.json()["choices"][0]["message"]["content"])
     except (ValueError, KeyError, IndexError, TypeError):
@@ -141,6 +153,22 @@ def chat_json(system: str, user: str, api_key: str | None = None) -> dict:
     if not isinstance(out, dict):
         raise LLMError("The LLM returned an unexpected answer; try again")
     return out
+
+
+def _model_gone(r) -> bool:
+    t = (getattr(r, "text", "") or "").lower()
+    return "model" in t and any(w in t for w in ("not found", "does not exist", "decommissioned", "not supported", "model_not_found"))
+
+
+def fallback_model(key: str, base: str, exclude: str = "") -> str:
+    """A currently available chat model: the first of PREFERRED_MODELS that the provider lists, else any chat model."""
+    try:
+        r = requests.get(f"{base}/models", headers={"Authorization": f"Bearer {key}"}, timeout=10)
+        ids = [m["id"] for m in r.json().get("data", []) if m.get("active", True)] if r.ok else []
+    except (requests.RequestException, ValueError):
+        return ""
+    ids = [i for i in ids if i != exclude]
+    return next((m for m in PREFERRED_MODELS if m in ids), next((i for i in ids if not any(x in i for x in _NON_CHAT)), ""))
 
 
 def extract_profile(resume_text: str, api_key: str | None = None) -> dict:

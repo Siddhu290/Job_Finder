@@ -50,8 +50,19 @@ class handler(BaseHTTPRequestHandler):
                 text = body["text"]
             st = webapi.store(self)
             c = profiles.load(st.get_json("_profile"))
+            saved, profile_error = None, None
             if text is not None:
-                profiles.add(c, llm.extract_profile(text, webapi.llm_key(self, st) or None), body.get("name", ""))
+                import resumes
+                try:   # keep the resume first, so an AI failure never loses it
+                    saved = resumes.save(st, body.get("name") or "My resume", text, "upload" if body.get("file") else "pasted")
+                except (resumes.ResumeError, ValueError):
+                    saved = None
+                try:
+                    profiles.add(c, llm.extract_profile(text, webapi.llm_key(self, st) or None), body.get("name", ""))
+                except llm.LLMError as e:
+                    profile_error = str(e)
+                    if not saved:
+                        raise
             elif action == "update":
                 profiles.update(c, str(body.get("id")), body)
             elif action == "activate" and any(p["id"] == body.get("id") for p in c["profiles"]):
@@ -64,15 +75,9 @@ class handler(BaseHTTPRequestHandler):
                 return webapi.send(self, 400, {"error": "Unknown resume action"})
             st.put_json("_profile", c)
             webapi.audit(st, "resume", action or "create", "")
-            saved = None
-            if text is not None:   # every upload also goes into the user's named resume collection
-                import resumes
-                try:
-                    saved = resumes.save(st, body.get("name") or profiles.active(c)["name"], text,
-                                         "upload" if body.get("file") else "pasted")
-                except (resumes.ResumeError, ValueError):
-                    saved = None
-            return webapi.send(self, 200, {**c, "text": text, "version": saved} if text is not None else c)
+            if text is not None:
+                return webapi.send(self, 200, {**c, "text": text, "version": saved, "profile_error": profile_error})
+            return webapi.send(self, 200, c)
         except resume_parser.ResumeFileError as e:
             return webapi.send(self, 400, {"error": str(e)})
         except (llm.LLMError, ValueError) as e:

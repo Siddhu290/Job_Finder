@@ -125,3 +125,42 @@ def test_dashboard_search_uses_resume_when_asked(monkeypatch):
     post(run_api.handler, {"X-Dashboard-Key": "pw"}, {"locations": ["Pune"], "mode": "any", "use_resume": False})
     assert seen == [["--trigger", "dashboard", "--mode", "any", "--locations", "Pune", "--roles", "Data Analyst"],
                     ["--trigger", "dashboard", "--mode", "any", "--locations", "Pune"]]
+
+
+def test_retired_model_falls_back_automatically(monkeypatch):
+    """Groq retires models; a 404 'model not found' must switch to an available model, not fail."""
+    calls = []
+
+    class R2:
+        def __init__(self, code, body, text=""):
+            self.status_code, self._b, self.text = code, body, text
+
+        def json(self):
+            return self._b
+    def request(method, url, **kw):
+        calls.append(kw["json"]["model"])
+        if kw["json"]["model"] == "llama-old":
+            return R2(404, {}, '{"error":{"message":"The model `llama-old` does not exist","code":"model_not_found"}}')
+        return R2(200, {"choices": [{"message": {"content": json.dumps({"roles": ["Data Analyst"]})}}]})
+    monkeypatch.setenv("LLM_MODEL", "llama-old")
+    monkeypatch.setattr(llm.http_client, "request", request)
+    monkeypatch.setattr(llm, "fallback_model", lambda key, base, exclude="": "qwen/qwen3.8-27b")
+    assert llm.chat_json("s", "u", "gsk_x")["roles"] == ["Data Analyst"]
+    assert calls == ["llama-old", "qwen/qwen3.8-27b"]
+
+
+def test_upload_keeps_resume_when_ai_fails(monkeypatch):
+    import webapi
+    from routes import resume
+    from tests.test_vercel import post
+    monkeypatch.setenv("DASHBOARD_PASSWORD", "pw")
+    monkeypatch.setenv("SECRETS_KEY", "ZmDfcTF7_60GrrY167zsiPd67pEvs0aGOv2oasOM1Pg=")
+    from storage.store import Store
+    from tests.test_store_budget import FakeClient
+    st = Store(FakeClient())
+    monkeypatch.setattr(webapi, "store", lambda *a: st)
+    monkeypatch.setattr(llm, "extract_profile", lambda *a: (_ for _ in ()).throw(llm.LLMError("The AI service returned an error")))
+    code, out = post(resume.handler, {"X-Dashboard-Key": "pw"}, {"text": RESUME, "name": "My CV"})
+    assert code == 200 and out["version"]["name"] == "My CV" and "AI service" in out["profile_error"]
+    import resumes
+    assert [v["name"] for v in resumes.list_versions(st)] == ["My CV"]
