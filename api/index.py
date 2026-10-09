@@ -27,7 +27,12 @@ class handler(BaseHTTPRequestHandler):
         fn = getattr(importlib.import_module(f"routes.{name}").handler, method, None)
         if fn is None:
             return webapi.send(self, 405, {"error": "Method not allowed"})
-        return fn(self)
+        try:
+            return fn(self)
+        except Exception as e:  # show the cause on the dashboard instead of Vercel's bare HTML 500
+            import traceback
+            traceback.print_exc()
+            return webapi.send(self, 500, {"error": f"Server error in {name}: {type(e).__name__}"})
 
     def do_GET(self):
         return self._dispatch("do_GET")

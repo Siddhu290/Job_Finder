@@ -31,9 +31,9 @@ def run_job(argv):
     return code, summary
 
 
-def _resume_args():
+def _resume_args(req):
     try:
-        return webapi.resume_args(webapi.store(self))
+        return webapi.resume_args(webapi.store(req))
     except Exception:  # no profile / sheet problem: fall back to the default roles; the run reports sheet errors itself
         return []
 
