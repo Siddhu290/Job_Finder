@@ -1,5 +1,5 @@
 "use strict";
-/* आपले जॉब्स आपल्या हातात dashboard. Plain JS, no framework. All data comes from /api/*; nothing is invented here.
+/* Apply Seamlessly dashboard. Plain JS, no framework. All data comes from /api/*; nothing is invented here.
    Safety rules enforced in the UI: only Verified jobs get the green "Apply on company site" button; every
    external link is http(s)-only and opens with noopener; text from the sheet is always inserted as text. */
 
@@ -129,7 +129,7 @@ function renderNav() {
     follow: S.data ? S.data.followups.overdue.length + S.data.followups.today.length : 0,
     archive: S.data ? S.data.archive.length : 0, admin: S.data && S.data.user ? S.data.user.pending_requests : 0 };
   const who = S.data && S.data.user && S.data.user.multi_user ? el("div", { class: "sub", style: "padding:0 10px 12px;margin-top:-10px" }, S.data.user.name || S.data.user.email) : "";
-  $("#nav").replaceChildren(el("div", { class: "brand" }, "आपले जॉब्स आपल्या हातात"), who,
+  $("#nav").replaceChildren(el("div", { class: "brand" }, "Apply Seamlessly"), who,
     ...VIEWS.filter(([k]) => k !== "admin" || isAdmin()).map(([k, label]) => el("button", { "aria-current": S.view === k ? "page" : null, onclick() { go(k) } },
       label, n[k] ? el("span", { class: "count" + (k === "admin" ? " alert" : ""), "aria-label": k === "admin" ? `${n[k]} pending requests` : null }, n[k]) : "")),
     el("div", { class: "foot" }, el("button", { class: "btn small", onclick: load }, "Refresh"), el("button", { class: "btn small", onclick: toggleTheme }, "Theme"),
