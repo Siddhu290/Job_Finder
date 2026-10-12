@@ -49,6 +49,13 @@ function overleafButton(tex, name) {
   return f;
 }
 
+const FIT = /\\def\\fitlevel\{(\d)\}/;
+function pageCount(pdf) {
+  // Our template writes uncompressed page objects (\pdfobjcompresslevel=0), so pages can be counted directly.
+  const text = new TextDecoder("latin1").decode(pdf);
+  return (text.match(/\/Type\s*\/Page(?!s)/g) || []).length;
+}
+
 async function compile(tex, name) {
   const missing = await missingPackages(tex);
   if (missing.length) {
@@ -61,7 +68,17 @@ async function compile(tex, name) {
   try {
     const c = await engine();
     status("Compiling your resume…");
-    const r = await c.compile(tex);
+    let r;
+    if (FIT.test(tex)) {
+      // App template: the roomiest spacing that still fits on one page (0 = roomy ... 4 = tightest).
+      for (let level = 0; level <= 4; level++) {
+        status(`Fitting to one page (spacing level ${level})…`);
+        r = await c.compile(tex.replace(FIT, `\\def\\fitlevel{${level}}`));
+        if (!r.success || !r.pdf || pageCount(r.pdf) <= 1) break;
+      }
+    } else {
+      r = await c.compile(tex);       // your own template: compiled exactly as written
+    }
     compiling = false;
     $("bar").hidden = true;
     if (!r.success || !r.pdf) {

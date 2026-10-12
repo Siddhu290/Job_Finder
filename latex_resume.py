@@ -21,25 +21,47 @@ from tailor import _norm, _numbers, MAX_JOB_CHARS
 _TEX_SPECIAL = {"\\": r"\textbackslash{}", "&": r"\&", "%": r"\%", "$": r"\$", "#": r"\#", "_": r"\_", "{": r"\{",
                 "}": r"\}", "~": r"\textasciitilde{}", "^": r"\textasciicircum{}", "<": r"\textless{}", ">": r"\textgreater{}",
                 "₹": "Rs. ", "→": r"$\rightarrow$", "✓": "", "●": "", "▪": "", "\t": " "}
-_SECTION = re.compile(r"^(?:professional\s+|technical\s+|key\s+|academic\s+|work\s+)?(summary|profile|objective|career objective|"
-                      r"experience|internships?|education|skills|projects|certifications?|achievements|awards|publications|"
-                      r"languages|interests|hobbies|positions? of responsibility|extra[- ]?curricular(?: activities)?|"
-                      r"activities|training|courses|coursework|volunteering|leadership|declaration)\s*:?\s*$", re.I)
+_SECTION_WORD = (r"(?:summary|profile|objective|career objective|experience|internships?|education|skills|projects|"
+                 r"certifications?|achievements|awards|publications|languages|interests|hobbies|positions? of responsibility|"
+                 r"extra[- ]?curricular(?: activities)?|activities|training|courses|coursework|volunteering|leadership|declaration)")
+_SECTION_PREFIX = r"(?:(?:professional|technical|key|academic|work|relevant|selected|personal|other|core|additional)\s+)*"
+_SECTION = re.compile(rf"^{_SECTION_PREFIX}{_SECTION_WORD}(?:\s+(?:and|&)\s+{_SECTION_PREFIX}{_SECTION_WORD})?\s*:?\s*$", re.I)
 _BULLET = re.compile(r"^\s*(?:[-•*–▪●◦]|\d{1,2}[.)])\s+")
 _LINK = re.compile(r"(?P<mail>[\w.+-]+@[\w-]+(?:\.[\w-]+)+)|(?P<url>(?:https?://|www\.)\S+|(?:linkedin\.com|github\.com)/\S+)")
 TEX_PREAMBLE = r"""\documentclass[10pt,a4paper]{article}
+\def\fitlevel{FITLEVEL} % one-page fit: 0 = roomy ... 4 = tightest (chosen from length; PDF in browser lowers it if needed)
 \usepackage[utf8]{inputenc}
 \usepackage[T1]{fontenc}
 \usepackage{lmodern}
-\usepackage[margin=0.6in]{geometry}
+\usepackage{geometry}
+\ifcase\fitlevel
+  \geometry{a4paper,top=0.6in,bottom=0.6in,left=0.7in,right=0.7in}\def\fs{11}\def\bl{13.6}\def\secgap{11pt}\def\entgap{6pt}\def\itemgap{2pt}
+\or
+  \geometry{a4paper,top=0.55in,bottom=0.55in,left=0.65in,right=0.65in}\def\fs{10.5}\def\bl{12.9}\def\secgap{9pt}\def\entgap{5pt}\def\itemgap{1.5pt}
+\or
+  \geometry{a4paper,top=0.5in,bottom=0.5in,left=0.6in,right=0.6in}\def\fs{10}\def\bl{12.2}\def\secgap{8pt}\def\entgap{4pt}\def\itemgap{1pt}
+\or
+  \geometry{a4paper,top=0.45in,bottom=0.45in,left=0.55in,right=0.55in}\def\fs{10}\def\bl{11.8}\def\secgap{6pt}\def\entgap{2.5pt}\def\itemgap{0pt}
+\else
+  \geometry{a4paper,top=0.4in,bottom=0.4in,left=0.5in,right=0.5in}\def\fs{9.5}\def\bl{11.2}\def\secgap{5pt}\def\entgap{2pt}\def\itemgap{0pt}
+\fi
 \usepackage[hidelinks]{hyperref}
 \input{glyphtounicode}
 \pdfgentounicode=1 % text stays selectable and readable by ATS software
-% plain LaTeX only (no titlesec/enumitem), so it also compiles in the in-browser engine
-\newcommand{\rsec}[1]{\vspace{8pt}{\large\bfseries #1}\par\vspace{-3pt}\noindent\rule{\linewidth}{0.4pt}\par\vspace{3pt}}
-\setlength{\leftmargini}{1.2em}
-\setlength{\parindent}{0pt}
+\pdfinterwordspaceon % real space characters in the PDF, so ATS text extraction never glues words together
+\pdfobjcompresslevel=0 % plain page objects, so the in-browser PDF step can count pages
+% Plain LaTeX only (no titlesec/enumitem/marvosym), so it compiles in the in-browser engine and on Overleaf.
 \pagestyle{empty}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0pt}
+\AtBeginDocument{\fontsize{\fs}{\bl}\selectfont\raggedright}
+\hyphenpenalty=10000 \exhyphenpenalty=10000 % never split words: cleaner, and ATS keyword matching stays intact
+\newcommand{\rsec}[1]{\par\addvspace{\secgap}{\bfseries\MakeUppercase{#1}}\par\vspace{2pt}\hrule height 0.6pt\vspace{3pt}}
+\newcommand{\entry}[2]{\par\addvspace{\entgap}\textbf{#1}\hfill #2\par}
+\newcommand{\etitle}[1]{\par\addvspace{\entgap}\textbf{#1}\par}
+\newcommand{\subentry}[2]{#1\hfill #2\par}
+\newenvironment{bullets}{\begin{list}{\textbullet}{\setlength{\leftmargin}{1.3em}\setlength{\labelwidth}{0.8em}\setlength{\labelsep}{0.5em}%
+  \setlength{\itemsep}{\itemgap}\setlength{\parsep}{0pt}\setlength{\topsep}{1pt}\setlength{\partopsep}{0pt}}}{\end{list}}
 """
 
 
@@ -72,9 +94,28 @@ def _section_title(line: str) -> str:
     return t.title() if t.isupper() else t
 
 
+_MONTH = r"(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\.?"
+_DATE = rf"(?:{_MONTH}\s+)?(?:19|20)\d{{2}}"
+_DATES = re.compile(rf"({_DATE}\s*(?:[–—-]|to)\s*(?:Present|Current|Now|Ongoing|{_DATE})|{_MONTH}\s+(?:19|20)\d{{2}}|(?:19|20)\d{{2}})\s*$", re.I)
+_PLACE = re.compile(r"\b(remote|on-?site|hybrid|virtual|wfh)\b|^\(?[A-Z][A-Za-z .]+,\s*[A-Z][A-Za-z .]+\)?$", re.I)
+_CONTACT = re.compile(r"@|\+?\d[\d ()-]{7,}|https?://|www\.|linkedin|github|\.com\b", re.I)
+
+
+def _split_right(line: str):
+    """('left', 'right') when the line ends with a date range or a place (shown right-aligned), else (line, '')."""
+    parts = [x.strip() for x in re.split(r"\s+\|\s+|\t+|\s{3,}", line) if x.strip()]
+    if len(parts) >= 2 and (_DATES.fullmatch(parts[-1]) or _PLACE.search(parts[-1])):
+        return " | ".join(parts[:-1]), parts[-1]
+    m = _DATES.search(line)
+    if m and len(line[:m.start()].strip(" ,–—-|")) > 3:          # "...Engineering   Aug 2021 – Jul 2025"
+        return line[:m.start()].rstrip(" ,–—-|"), m.group(1)
+    return line, ""
+
+
 def to_latex(text: str) -> str:
-    """Complete .tex document (pdfLaTeX) from a plain-text resume: first line = name, lines before the first
-    section heading = contact details, then sections with bullets. Same words, same order as the text."""
+    """Complete .tex document from a plain-text resume, in the default layout: centred name, italic tagline, one
+    contact line, capitalised section headings with a rule, bold entry titles with dates/places on the right,
+    compact bullets. Same words, same order as the text; nothing is rewritten."""
     lines = [l.rstrip() for l in (text or "").splitlines()]
     while lines and not lines[0].strip():
         lines.pop(0)
@@ -82,40 +123,58 @@ def to_latex(text: str) -> str:
     head = [l.strip() for l in lines[:first] if l.strip()]
     body = [r"\begin{document}"]
     if head:
-        body += [r"\begin{center}", r"{\LARGE\bfseries " + tex_escape(head[0]) + r"}\\[3pt]"]
-        if head[1:]:
-            body.append(r"\small " + r" $\cdot$ ".join(_tex_inline(h) for h in head[1:]))
+        body += [r"\begin{center}", r"{\Large\bfseries " + tex_escape(head[0].upper()) + r"}\\[2pt]"]
+        tagline = [h for h in head[1:] if not _CONTACT.search(h)]
+        contact = [c.strip() for h in head[1:] if _CONTACT.search(h) for c in re.split(r"\s*[|•·]\s*", h) if c.strip()]
+        if tagline:
+            body.append(r"{\itshape " + tex_escape(" | ".join(tagline)) + r"}\\[2pt]")
+        if contact:
+            body.append(r"{\small " + r" \textbullet{} ".join(_tex_inline(c) for c in contact) + "}")
         body.append(r"\end{center}")
-    in_list = False
+        body.append(r"\vspace{-6pt}")
+    in_list, new_entry = False, True
     rest = lines[first:]
     for i, raw in enumerate(rest):
         line = raw.strip()
         is_bullet = bool(_BULLET.match(raw))
         if in_list and not is_bullet:
-            body.append(r"\end{itemize}")
-            in_list = False
+            body.append(r"\end{bullets}")
+            in_list, new_entry = False, True
         if not line:
+            new_entry = True
             continue
         if _SECTION.match(line):
             body.append(r"\rsec{" + tex_escape(_section_title(line)) + "}")
+            new_entry = True
         elif is_bullet:
             if not in_list:
-                body.append(r"\begin{itemize}\setlength{\itemsep}{1pt}\setlength{\parskip}{0pt}")
+                body.append(r"\begin{bullets}")
                 in_list = True
             body.append(r"\item " + _tex_inline(_BULLET.sub("", raw).strip()))
         else:
             nxt = next((r for r in rest[i + 1:] if r.strip()), "")
-            label = re.match(r"^([^:]{2,40}):\s+(.+)$", line)          # "Languages: Python, SQL"
-            if _BULLET.match(nxt):
-                body.append(r"\textbf{" + _tex_inline(line) + r"}\par")   # an entry title above its bullets
-            elif label:
+            label = re.match(r"^([^:|]{2,40}):\s+(.+)$", line)          # "Languages: Python, SQL"
+            left, right = _split_right(line)
+            if label and not right:
                 body.append(r"\textbf{" + tex_escape(label.group(1)) + r":} " + _tex_inline(label.group(2)) + r"\par")
+            elif right:
+                body.append((r"\entry{" if new_entry else r"\subentry{") + _tex_inline(left) + "}{" + _tex_inline(right) + "}")
+            elif new_entry and (_BULLET.match(nxt) or _split_right(nxt.strip())[1]):
+                body.append(r"\etitle{" + _tex_inline(line) + "}")     # entry title above its details
             else:
                 body.append(_tex_inline(line) + r"\par")
+            new_entry = False
     if in_list:
-        body.append(r"\end{itemize}")
+        body.append(r"\end{bullets}")
     body.append(r"\end{document}")
-    return TEX_PREAMBLE + "\n" + "\n".join(body) + "\n"
+    return TEX_PREAMBLE.replace("FITLEVEL", str(fit_level(lines))) + "\n" + "\n".join(body) + "\n"
+
+
+def fit_level(lines) -> int:
+    """Spacing level (0 roomy .. 4 tight) from the resume's estimated height in printed lines (~100 characters per
+    line on A4 at 10pt; a section heading takes about two lines)."""
+    est = sum(2 if _SECTION.match(l.strip()) else max(1, -(-len(l.strip()) // 100)) for l in lines if l.strip())
+    return 0 if est <= 56 else 1 if est <= 62 else 2 if est <= 68 else 3 if est <= 76 else 4   # calibrated on real compiles
 
 
 # ---------------- the user's own .tex ----------------

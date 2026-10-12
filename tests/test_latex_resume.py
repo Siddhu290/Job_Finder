@@ -69,7 +69,7 @@ def test_plain_text_to_latex_escapes_everything():
                       "- Saved Rs. 2 lakh \\input{/etc/passwd} $x$ ~ ^\n")
     assert r"\href{mailto:asha@example.com}{asha@example.com}" in tex and r"\href{https://github.com/asha_k}{github.com/asha\_k}" in tex
     assert r"\textbf{Languages:} C\# \& SQL, 100\%" in tex and r"\rsec{Skills}" in tex and r"\usepackage{titlesec}" not in tex and r"\usepackage{enumitem}" not in tex
-    assert r"\textbf{BI Dashboard}\par" in tex and r"\item Saved Rs. 2 lakh \textbackslash{}input\{/etc/passwd\} \$x\$" in tex
+    assert r"\etitle{BI Dashboard}" in tex and r"\item Saved Rs. 2 lakh \textbackslash{}input\{/etc/passwd\} \$x\$" in tex
     assert tex.count(r"\input{") == 1      # only the template's own \input{glyphtounicode}
 
 
@@ -128,3 +128,39 @@ def test_apply_rechecks_keyword_only_with_the_job():
     r = lx.apply_edits(TEX, [{"find": "Built a sales dashboard in Power BI for 12 regions",
                               "replace": "Spearheaded an enterprise analytics initiative for 12 regions"}], JD_BI)
     assert r["applied"] == 0 and "only keywords" in r["skipped"][0]["reason"]
+
+
+def test_default_layout_matches_the_sample_resume():
+    tex = lx.to_latex("""Siddharth More
+Aspiring Python Developer
+sid@example.com | 9518508756 | github.com/Siddhu290
+EDUCATION
+MET Institute of Engineering | Nashik, Maharashtra
+Bachelor of Engineering | Aug 2021 – Jul 2025
+EXPERIENCE
+Odoo Python Developer | Alligator Infosoft (On-Site)
+Sept 2025 – Present
+- Developed custom ERP modules using Python
+RELEVANT PROJECTS
+Mood Mate – Python, OpenCV
+- Built an emotion-aware chatbot
+CERTIFICATIONS AND TRAINING
+- SQL
+""")
+    assert r"{\Large\bfseries SIDDHARTH MORE}" in tex and r"{\itshape Aspiring Python Developer}" in tex
+    assert r"sid@example.com} \textbullet{} 9518508756" in tex
+    for h in ("Education", "Experience", "Relevant Projects", "Certifications And Training"):
+        assert r"\rsec{" + h + "}" in tex
+    assert r"\entry{MET Institute of Engineering}{Nashik, Maharashtra}" in tex
+    assert r"\subentry{Bachelor of Engineering}{Aug 2021 – Jul 2025}" in tex
+    assert r"\entry{Odoo Python Developer}{Alligator Infosoft (On-Site)}" in tex and r"\etitle{Mood Mate – Python, OpenCV}" in tex
+    assert not any(p in tex for p in (r"\usepackage{titlesec}", r"\usepackage{enumitem}", r"\usepackage{marvosym}"))
+
+
+def test_one_page_fit_level_follows_length_and_is_set_in_the_tex():
+    short = "Asha\nasha@example.com\nSKILLS\nPython, SQL\n"
+    long_ = short + "EXPERIENCE\n" + "\n".join(f"- Built reporting pipeline number {i} for the finance team using SQL" for i in range(80))
+    assert lx.fit_level(short.splitlines()) == 0 and lx.fit_level(long_.splitlines()) == 4
+    tex = lx.to_latex(short)
+    assert r"\def\fitlevel{0}" in tex and "FITLEVEL" not in tex
+    assert r"\pdfinterwordspaceon" in tex and r"\hyphenpenalty=10000" in tex      # ATS: real spaces, no split words

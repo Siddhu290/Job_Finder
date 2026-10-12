@@ -102,7 +102,18 @@ Module: `latex_resume.py`, with routes `/api/tailor` and `/api/resumes`.
 
 New skills are flagged and left unticked by default. You tick the edits you want. `apply_edits` re-checks every edit on the server before applying it, so the layout never changes.
 
-**Plain-text resumes.** `to_latex` places the text into a fixed one-page template, escaping every character. No AI is involved.
+**Plain-text resumes: the default layout for every user without their own `.tex`.** `to_latex` places the text into a fixed template modelled on the owner's sample resume:
+- centred name in capitals, italic tagline, one contact line separated by "•";
+- capitalised section headings, each with a full-width rule;
+- a bold role or school on the left with its date range or place right-aligned;
+- compact bullets in Latin Modern.
+
+It is ATS-friendly:
+- single column, standard headings;
+- `\pdfgentounicode` and `\pdfinterwordspaceon`, so extracted text has real spaces;
+- no hyphenation, left-aligned text.
+
+**One-page fit.** There are five spacing levels (`\def\fitlevel{0..4}`: font size, margins and gaps). `fit_level` estimates the level from the resume's length; that estimate is what Overleaf gets. *PDF in browser* compiles from level 0 upwards and keeps the roomiest level that fits on one page. All of this is plain LaTeX, so it compiles in the browser engine. No AI is involved.
 
 **Getting the result out:**
 - Copy LaTeX.
