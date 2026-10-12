@@ -483,7 +483,7 @@ function viewResume() {
 }
 function resumeBody(c) {
   const p = c.profiles.find(x => x.id === c.active);
-  const file = el("input", { type: "file", accept: ".pdf,.docx", hidden: true, async onchange(e) {
+  const file = el("input", { type: "file", accept: ".pdf,.docx,.tex", hidden: true, async onchange(e) {
     const f = e.target.files[0]; if (!f) return;
     try {
       const name = prompt("Name for this resume (e.g. “Data Analyst – Oct 2026”)", f.name.replace(/\.(pdf|docx)$/i, "")) || "";
@@ -546,11 +546,13 @@ function libraryPanel() {
         vs.map(v => el("tr", {},
           el("td", {}, el("input", { type: "radio", name: "resumePick", "aria-label": "Use " + v.name, checked: S.resumeId === v.id || null, onchange() { S.resumeId = v.id; drawAts() } })),
           el("td", {}, el("b", {}, v.name), v.job ? el("div", { class: "muted" }, "for " + v.job) : ""),
-          el("td", {}, el("span", { class: "tag" + (v.source === "tailored" ? " acc" : "") }, SRC[v.source] || v.source)),
+          el("td", {}, el("span", { class: "tag" + (v.source === "tailored" ? " acc" : "") }, SRC[v.source] || v.source), v.format === "latex" ? el("span", { class: "tag ok", style: "margin-left:4px" }, "LaTeX") : ""),
           el("td", { class: "mono" }, v.created), el("td", { class: "muted" }, `${Math.round(v.chars / 100) / 10}k chars`),
           el("td", {}, el("span", { class: "row" },
             el("button", { class: "btn small", onclick() { const n = prompt("New name", v.name); if (n) post("/api/resumes", { action: "rename", id: v.id, name: n }).then(reload).catch(fail) } }, "Rename"),
-            el("button", { class: "btn small", async onclick() { try { downloadDocx(await resumeText(v.id), v.name) } catch (e) { fail(e) } } }, "DOCX"),
+            v.format === "latex"
+              ? el("button", { class: "btn small", async onclick() { try { latexDialog(await resumeText(v.id), v.name) } catch (e) { fail(e) } } }, "LaTeX / PDF")
+              : el("button", { class: "btn small", async onclick() { try { downloadDocx(await resumeText(v.id), v.name) } catch (e) { fail(e) } } }, "DOCX"),
             el("button", { class: "btn small danger", onclick() { if (confirm(`Delete “${v.name}”? This can't be undone.`)) post("/api/resumes", { action: "delete", id: v.id }).then(() => { if (S.resumeId === v.id) S.resumeId = null; reload() }).catch(fail) } }, "Delete"))))))
         : el("div", { class: "empty" }, "No resumes yet. Upload one above or paste a version."));
     S.resumes = vs; drawAts();
@@ -573,7 +575,20 @@ function atsPanel() {
   const out = el("div", { "aria-live": "polite" });
   const target = () => pick.value ? { job_id: pick.value } : { job_text: jd.value, job_title: jdTitle.value };
   const label = () => pick.value ? `${job(pick.value).title} · ${job(pick.value).company}` : (jdTitle.value || "pasted job");
-  pick.onchange = () => { jdBox.hidden = !!pick.value; S.tailorJob = pick.value || null };
+  const rec = el("div", { "aria-live": "polite" });
+  const recommend = async () => {
+    rec.replaceChildren();
+    if (!pick.value || !S.resumes || !S.resumes.some(v => v.source === "tailored")) return;
+    try {
+      const { recommendation: r } = await post("/api/resumes", { action: "recommend", job_id: pick.value, current_id: S.resumeId || "" });
+      if (!r || r.version.id === S.resumeId) return;
+      rec.replaceChildren(el("p", { class: "notice ok" }, "Recommended for this job: ", el("b", {}, r.version.name),
+        ` — tailored earlier for “${r.version.role || r.version.job}” (${r.similarity}% similar: role ${r.role_match}%, skills ${r.skill_overlap}%).`,
+        r.ats != null ? ` ATS score for this job: ${r.ats}` + (r.current_ats != null ? ` vs ${r.current_ats} for the selected resume.` : ".") : "", " ",
+        el("button", { class: "btn small primary", onclick() { S.resumeId = r.version.id; drawAts(); toast(`Using “${r.version.name}”`) } }, "Use this version")));
+    } catch (e) { /* a recommendation is optional */ }
+  };
+  pick.onchange = () => { jdBox.hidden = !!pick.value; S.tailorJob = pick.value || null; recommend() };
   jdBox.hidden = !!pick.value;
   drawAts = () => {
     const v = (S.resumes || []).find(x => x.id === S.resumeId);
@@ -587,7 +602,8 @@ function atsPanel() {
           out.replaceChildren(el("p", { class: "muted" }, el("span", { class: "spinner" }), " Asking the AI for truthful suggestions…"));
           try { out.replaceChildren(tailorResult(await post("/api/tailor", { resume_id: S.resumeId, ...target() }), pick.value ? job(pick.value) : null, label())) }
           catch (e) { out.replaceChildren(el("p", { class: "notice bad" }, e.message)) } } }, "AI suggestions & tailored draft")),
-      jdBox, out);
+      rec, jdBox, out);
+    recommend();
   };
   drawAts();
   return box;
@@ -609,6 +625,7 @@ function atsResult(r) {
     el("p", { class: `muted` }, r.note), el("span", { class: `tag ${tone}` }, `${r.words} words · ${r.bullets} bullets · ${r.bullets_with_numbers} with numbers`));
 }
 function tailorResult(r, j, jobLabel) {
+  if (r.mode === "latex") return latexEditsResult(r, j, jobLabel);
   const draft = el("textarea", { rows: 18, "aria-label": "Tailored draft" }, r.draft || "");
   return el("div", { style: "margin-top:12px" },
     r.warnings.map(w => el("p", { class: "notice" }, "⚠ " + w)),
@@ -622,13 +639,76 @@ function tailorResult(r, j, jobLabel) {
       el("button", { class: "btn primary", async onclick() {
         const name = prompt("Name for this resume version", `${jobLabel}`.slice(0, 70)); if (!name) return;
         try {
-          const v = await post("/api/resumes", { action: "save", name, text: draft.value, source: "tailored", job: jobLabel });
+          const v = await post("/api/resumes", { action: "save", name, text: draft.value, source: "tailored", job: jobLabel, job_id: j ? j.id : "" });
           S.resumeId = v.id; toast(`Saved as “${v.name}” in My resumes`);
           if (j) setApp(j, { "Resume Version": v.name }, "Linked to this application");
           render();
         } catch (e) { fail(e) } } }, "Save as new resume version"),
       el("button", { class: "btn", onclick() { downloadDocx(draft.value, jobLabel) } }, "Download DOCX"),
+      el("button", { class: "btn", async onclick() { try { latexDialog((await post("/api/tailor", { action: "latex", text: draft.value })).tex, jobLabel) } catch (e) { fail(e) } } }, "LaTeX / PDF"),
       el("button", { class: "btn", onclick() { printText(draft.value) } }, "Print / save PDF")));
+}
+// ---------- LaTeX: your own .tex, per-job edits, copy / download / Overleaf / PDF in the browser ----------
+function latexEditsResult(r, j, jobLabel) {
+  const boxes = r.edits.map(e => el("input", { type: "checkbox", checked: !e.warning || null, "aria-label": "Apply edit " + e.id }));
+  const out = el("div", { "aria-live": "polite" });
+  return el("div", { style: "margin-top:12px" },
+    r.warnings.map(w => el("p", { class: "notice" }, "⚠ " + w)),
+    r.summary ? el("p", {}, r.summary) : "",
+    el("div", { class: "tags", style: "margin:6px 0" }, r.keywords.map(k => el("span", { class: "tag " + (k.in_resume ? "ok" : "warn"), title: k.in_resume ? "Already in your resume" : "Not in your resume: add only if true" }, (k.in_resume ? "✓ " : "+ ") + k.keyword))),
+    r.edits.length ? el("div", {},
+      el("h3", { style: "margin-top:10px" }, `Suggested edits to your LaTeX (${r.edits.length}) — tick the ones to apply`),
+      el("table", {}, el("tr", {}, el("th", {}, "Apply"), el("th", {}, "Your LaTeX"), el("th", {}, "Becomes"), el("th", {}, "Why")),
+        r.edits.map((e, i) => el("tr", {}, el("td", {}, boxes[i]), el("td", { class: "mono" }, e.find), el("td", { class: "mono" }, e.replace),
+          el("td", { class: "muted" }, e.reason, e.warning ? el("div", { class: "tag warn" }, "⚠ " + e.warning) : ""))))) : el("p", { class: "notice" }, "No safe edits were suggested for this job."),
+    el("div", { class: "row", style: "margin-top:8px" },
+      el("button", { class: "btn primary", async onclick() {
+        try {
+          const res = await post("/api/tailor", { action: "latex_apply", resume_id: S.resumeId, edits: r.edits.filter((_, i) => boxes[i].checked) });
+          out.replaceChildren(res.skipped.length ? el("p", { class: "notice" }, `${res.skipped.length} edit(s) skipped: ` + res.skipped.map(s => s.reason).join("; ")) : "",
+            el("p", { class: "notice ok" }, `${res.applied} edit(s) applied. Check the result, then copy it, open it in Overleaf or make the PDF.`),
+            latexTools(res.tex, jobLabel, j));
+        } catch (e) { fail(e) } } }, "Apply selected edits")),
+    out);
+}
+function latexTools(tex, name, j) {
+  const code = el("textarea", { rows: 16, class: "mono", spellcheck: "false", "aria-label": "LaTeX source" }, tex);
+  return el("div", { style: "margin-top:8px" }, code,
+    el("div", { class: "row", style: "margin-top:8px" },
+      el("button", { class: "btn primary", async onclick() { try { await navigator.clipboard.writeText(code.value); toast("LaTeX copied") } catch (e) { code.select(); toast("Press Ctrl+C to copy") } } }, "Copy LaTeX"),
+      el("button", { class: "btn", onclick() { saveFile(code.value, (name || "resume").replace(/[^\w.-]+/g, "_") + ".tex", "application/x-tex") } }, "Download .tex"),
+      el("button", { class: "btn", title: "Creates a new project in your Overleaf account; Overleaf makes the PDF", onclick() { openInOverleaf(code.value, name) } }, "Open in Overleaf ↗"),
+      el("button", { class: "btn", title: "Compiles on this device (first time downloads about 45 MB)", onclick() { pdfInBrowser(code.value, name) } }, "PDF in browser"),
+      el("button", { class: "btn", async onclick() {
+        const n = prompt("Name for this resume version", `${name || "Resume"}`.slice(0, 70)); if (!n) return;
+        try {
+          const v = await post("/api/resumes", { action: "save", name: n, text: code.value, source: "tailored", job: name || "", job_id: j ? j.id : "" });
+          S.resumeId = v.id; toast(`Saved as “${v.name}” in My resumes`);
+          if (j) setApp(j, { "Resume Version": v.name }, "Linked to this application");
+          render();
+        } catch (e) { fail(e) } } }, "Save as new resume version")));
+}
+function latexDialog(tex, name) {
+  const dlg = $("#dlg");
+  dlg.replaceChildren(el("div", { class: "dh" }, el("h2", { style: "margin:0" }, `LaTeX · ${name || "resume"}`), el("button", { class: "btn small", onclick() { dlg.close() } }, "Close")),
+    latexTools(tex, name, null));
+  dlg.showModal();
+}
+function saveFile(text, filename, type) {
+  const a = el("a", { href: URL.createObjectURL(new Blob([text], { type })), download: filename }); a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+function openInOverleaf(tex, name) {
+  // Overleaf's documented "open in Overleaf" form; your code goes to Overleaf only when you click.
+  const f = el("form", { method: "POST", action: "https://www.overleaf.com/docs", target: "_blank", hidden: true },
+    el("input", { type: "hidden", name: "encoded_snip", value: encodeURIComponent(tex) }),
+    el("input", { type: "hidden", name: "snip_name", value: (name || "Resume").slice(0, 60) }),
+    el("input", { type: "hidden", name: "engine", value: "pdflatex" }));
+  document.body.append(f); f.submit(); f.remove();
+}
+function pdfInBrowser(tex, name) {
+  const w = window.open("/pdf.html", "_blank"); if (!w) return toast("Allow pop-ups to make the PDF");
+  const send = e => { if (e.source === w && e.origin === location.origin && e.data === "pdf-ready") { w.postMessage({ tex, name }, location.origin); removeEventListener("message", send) } };
+  addEventListener("message", send);
 }
 async function downloadDocx(text, name) {
   try {

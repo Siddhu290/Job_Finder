@@ -1,6 +1,9 @@
 """/api/tailor (authenticated). Drafts only; nothing is stored or sent anywhere.
 POST {"job_id" | "job_text"+"job_title", "resume_id" | "resume_text"} -> suggestions + tailored draft (truthfulness warnings)
-POST {"action": "docx", "text": "...", "name": ""}  -> the given draft as a .docx download"""
+POST {"action": "docx", "text": "...", "name": ""}  -> the given draft as a .docx download
+A LaTeX resume gets {"mode": "latex", "edits": [{id, find, replace, reason, warning}], ...} instead of a draft:
+POST {"action": "latex_apply", "resume_id" | "tex", "edits": [{find, replace}]} -> {"tex", "applied", "skipped"} (re-checked)
+POST {"action": "latex", "text": "..."}          -> a plain-text resume as a .tex document (no AI)"""
 import os
 import re
 import sys
@@ -28,6 +31,21 @@ class handler(BaseHTTPRequestHandler):
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
             return self.wfile.write(data)
+        import latex_resume
+        if body.get("action") == "latex":
+            return webapi.send(self, 200, {"tex": latex_resume.to_latex(str(body.get("text", ""))[:40000])})
+        if body.get("action") == "latex_apply":
+            tex = str(body.get("tex", ""))
+            if body.get("resume_id"):
+                import resumes
+                try:
+                    tex = resumes.get_text(webapi.store(self), str(body["resume_id"]))
+                except KeyError:
+                    return webapi.send(self, 404, {"error": "No such resume"})
+            if not latex_resume.is_latex(tex):
+                return webapi.send(self, 400, {"error": "Not a LaTeX resume"})
+            edits = body.get("edits") if isinstance(body.get("edits"), list) else []
+            return webapi.send(self, 200, latex_resume.apply_edits(tex[:latex_resume.MAX_TEX], edits[:latex_resume.MAX_EDITS]))
         if not webapi.rate_ok(self, "tailor", 10):
             return webapi.send(self, 429, {"error": "Too many requests; wait a minute"})
         from integrations.google_sheets import SheetsError
@@ -47,6 +65,10 @@ class handler(BaseHTTPRequestHandler):
                     text = resumes.get_text(st, str(body["resume_id"]))
                 except KeyError:
                     return webapi.send(self, 404, {"error": "No such resume"})
+            if latex_resume.is_latex(text):         # the user's own .tex: exact edits to approve, layout untouched
+                out = latex_resume.propose_edits(text, job.get("Job Title", ""), job.get("Company", ""), desc,
+                                                 webapi.llm_key(self, st) or None)
+                return webapi.send(self, 200, {**out, "tex": text})
             out = tailor.tailor(text, job.get("Job Title", ""), job.get("Company", ""), desc,
                                 webapi.llm_key(self, st) or None)
             return webapi.send(self, 200, out)

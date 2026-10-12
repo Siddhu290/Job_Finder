@@ -88,6 +88,30 @@ They never make a job Verified.
 - `ats.py` scores a resume against a job description using a separate ATS-style keyword/structure heuristic.
 - `tailor.py` produces tailoring suggestions and a draft, with explicit anti-fabrication guards (rejects invented numbers, requires bullet suggestions to originate from a real bullet, flags unused keywords as "add only if true").
 
+## LaTeX resumes (per-job edits, copy / Overleaf / PDF)
+
+Module: `latex_resume.py`, with routes `/api/tailor` and `/api/resumes`.
+
+**Your own `.tex`.** Upload a `.tex` file or paste the source. It is stored exactly as written, encrypted like every resume version, with `format: "latex"`. The AI profile, ATS score and matching read its plain text (`to_plain`).
+
+**Per-job edits.** `propose_edits` asks the AI for exact find/replace edits to *your* source. `check_edit` keeps an edit only if all of these hold:
+- the text to change occurs exactly once;
+- the replacement adds no LaTeX command, and never one that touches files, runs code or defines macros (`\input`, `\write`, `\def`, `\usepackage`, …);
+- braces stay balanced;
+- it adds no new numbers.
+
+New skills are flagged and left unticked by default. You tick the edits you want. `apply_edits` re-checks every edit on the server before applying it, so the layout never changes.
+
+**Plain-text resumes.** `to_latex` places the text into a fixed one-page template, escaping every character. No AI is involved.
+
+**Getting the result out:**
+- Copy LaTeX.
+- Download `.tex`.
+- **Open in Overleaf:** Overleaf's documented form POST to `https://www.overleaf.com/docs` with `encoded_snip`. This is the only change to the main security policy (`form-action`).
+- **PDF in browser:** `public/pdf.html` with Siglum (TeX Live 2025 in WebAssembly, MIT). It has its **own** security policy allowing only `cdn.jsdelivr.net`, `cdn.siglum.org`, `blob:` and `wasm-unsafe-eval`. It receives the LaTeX by `postMessage` from an app window on the same site and never reads the session. Fetching packages from third-party proxies is switched off, so the engine has a fixed package set. titlesec, enumitem, marvosym, ragged2e and paracol are **not** included, and Jake's Resume uses the first three. `pdf.js` checks the `\usepackage` list against the engine's file list before compiling. If anything is missing, it names the packages and offers Open in Overleaf. The generated template uses plain LaTeX only, so it always compiles in the browser.
+
+**Recommended version.** Saving a tailored version for a job stores that job's role words and skills. For a new job, `resumes.recommend` picks the closest tailored version (60% role words with seniority words ignored, 40% skill overlap, threshold 50%). It shows that version's ATS score for this job next to the selected resume's score. This runs locally, with no AI call.
+
 ## Cross-cutting concerns
 
 - **Config** (`config.py`) validates all required env vars at startup and fails closed with a clear error, never logging values.

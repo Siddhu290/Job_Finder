@@ -1,7 +1,9 @@
 """/api/resumes (signed in). The user's named resume collection (encrypted at rest, private to the user).
 GET                                                   -> {"versions": [{id, name, source, job, created, chars}]}
 POST {"action": "save", "name", "text", "source", "job"} -> new version
-POST {"action": "get" | "delete", "id"}  |  {"action": "rename", "id", "name"}"""
+POST {"action": "get" | "delete", "id"}  |  {"action": "rename", "id", "name"}
+POST {"action": "recommend", "job_id" | "job_text"+"job_title", "current_id"} -> closest tailored version for this job (no AI)
+A save with "job_id" remembers that job's role and skills, so the version can be recommended for similar jobs."""
 import os
 import sys
 from http.server import BaseHTTPRequestHandler
@@ -27,11 +29,26 @@ class handler(BaseHTTPRequestHandler):
         action, vid = body.get("action"), str(body.get("id", ""))[:20]
         try:
             if action == "save":
-                v = resumes.save(st, body.get("name"), str(body.get("text", "")), body.get("source", "pasted"), body.get("job", ""))
+                role, skills = "", []
+                if body.get("job_id"):
+                    import matching
+                    found = webapi.job_text(st, str(body["job_id"]))
+                    if found:
+                        role, skills = found[0], matching.find_skills(found[2])
+                v = resumes.save(st, body.get("name"), str(body.get("text", "")), body.get("source", "pasted"), body.get("job", ""),
+                                 role, skills)
                 webapi.audit(st, "resume", "version saved", detail=v["name"])
                 return webapi.send(self, 200, v)
             if action == "get":
                 return webapi.send(self, 200, {"id": vid, "text": resumes.get_text(st, vid)})
+            if action == "recommend":
+                title, desc = str(body.get("job_title", ""))[:120], str(body.get("job_text", ""))[:20000]
+                if body.get("job_id"):
+                    found = webapi.job_text(st, str(body["job_id"]))
+                    if not found:
+                        return webapi.send(self, 404, {"error": "Job not found"})
+                    title, desc = found[0], found[2]
+                return webapi.send(self, 200, {"recommendation": resumes.recommend(st, title, desc, str(body.get("current_id", "")))})
             if action == "rename":
                 return webapi.send(self, 200, resumes.rename(st, vid, body.get("name")))
             if action == "delete":

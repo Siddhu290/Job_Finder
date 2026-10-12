@@ -34,7 +34,9 @@ def list_versions(st) -> list:
     return sorted(_index(st), key=lambda v: v.get("created", ""), reverse=True)
 
 
-def save(st, name: str, text: str, source: str = "pasted", job: str = "") -> dict:
+def save(st, name: str, text: str, source: str = "pasted", job: str = "", role: str = "", job_skills=None) -> dict:
+    """role / job_skills: the job a tailored version was made for, so it can be recommended for similar jobs."""
+    import latex_resume
     text = (text or "").strip()
     if len(text) < 100:
         raise ResumeError("The resume text is too short")
@@ -46,7 +48,8 @@ def save(st, name: str, text: str, source: str = "pasted", job: str = "") -> dic
         name = f"{name} ({datetime.now().strftime('%d %b %H:%M')})"
     v = {"id": uuid.uuid4().hex[:10], "name": name, "source": source if source in SOURCES else "pasted",
          "job": str(job or "")[:120], "created": datetime.now().strftime("%Y-%m-%d %H:%M"),
-         "chars": min(len(text), MAX_CHARS)}
+         "chars": min(len(text), MAX_CHARS), "format": "latex" if latex_resume.is_latex(text) else "text",
+         "role": str(role or "")[:120], "job_skills": [str(s)[:40] for s in (job_skills or [])][:40]}
     st.put_json(f"_resume_{v['id']}", {"text": user_secrets.encrypt_text(text[:MAX_CHARS])})
     st.put_json(INDEX, {"versions": versions + [v]})
     return v
@@ -56,6 +59,53 @@ def get_text(st, vid: str) -> str:
     if not any(v["id"] == vid for v in _index(st)):
         raise KeyError(vid)
     return user_secrets.decrypt_text((st.get_json(f"_resume_{vid}") or {}).get("text", ""))
+
+
+def plain_text(st, vid: str) -> str:
+    """Readable text of a version (a LaTeX version is converted), for ATS scoring, matching and the AI profile."""
+    import latex_resume
+    t = get_text(st, vid)
+    return latex_resume.to_plain(t) if latex_resume.is_latex(t) else t
+
+
+_LEVEL_WORDS = {"junior", "jr", "senior", "sr", "fresher", "freshers", "trainee", "intern", "internship", "associate", "entry",
+                "level", "graduate", "grad", "i", "ii", "iii", "1", "2", "3", "lead", "the", "a", "an", "for", "and", "of", "in",
+                "at", "remote", "hybrid", "wfh", "work", "from", "home", "fulltime", "full", "time", "contract", "role"}
+
+
+def role_words(title: str) -> set:
+    from verification.vacancy_matcher import norm_title
+    return set(norm_title(title).split()) - _LEVEL_WORDS
+
+
+def recommend(st, job_title: str, description: str, current_id: str = "", min_score: float = 0.5):
+    """The saved tailored version made for the most similar job (role words + the skills the job asks for), scored
+    with the ATS check against this job, next to the currently selected version. Local only: no AI call. None if
+    no tailored version is similar enough."""
+    import ats
+    import matching
+    want_role, want_skills = role_words(job_title), {k.lower() for k in matching.find_skills(description or "")}
+    best = None
+    for v in _index(st):
+        if v.get("source") != "tailored" or not (v.get("role") or v.get("job_skills")):
+            continue
+        rw, sk = role_words(v.get("role", "")), {k.lower() for k in v.get("job_skills") or []}
+        role_sim = len(rw & want_role) / len(rw | want_role) if rw | want_role else 0
+        skill_sim = len(sk & want_skills) / len(sk | want_skills) if sk | want_skills else 0
+        sim = 0.6 * role_sim + 0.4 * skill_sim
+        if sim >= min_score and (best is None or sim > best[0]):
+            best = (sim, v, role_sim, skill_sim)
+    if not best:
+        return None
+    sim, v, role_sim, skill_sim = best
+    out = {"version": v, "similarity": round(sim * 100), "role_match": round(role_sim * 100), "skill_overlap": round(skill_sim * 100),
+           "ats": ats.score(plain_text(st, v["id"]), description, job_title)["score"] if description else None}
+    if current_id and current_id != v["id"]:
+        try:
+            out["current_ats"] = ats.score(plain_text(st, current_id), description, job_title)["score"] if description else None
+        except KeyError:
+            pass
+    return out
 
 
 def rename(st, vid: str, name: str) -> dict:

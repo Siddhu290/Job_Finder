@@ -34,8 +34,8 @@ def test_pdf_and_docx_text():
 
 
 @pytest.mark.parametrize("name,data,msg", [
-    ("cv.pdf", b"MZ\x90\x00 not a pdf", "PDF or DOCX"),          # renamed executable
-    ("cv.exe", make_pdf(), "PDF or DOCX"),                       # right bytes, wrong type
+    ("cv.pdf", b"MZ\x90\x00 not a pdf", "PDF, DOCX or .tex"),          # renamed executable
+    ("cv.exe", make_pdf(), "PDF, DOCX or .tex"),                       # right bytes, wrong type
     ("cv.docx", b"PK\x03\x04garbage", "Could not read this DOCX"),
     ("cv.pdf", b"%PDF-1.4 garbage", "Could not read this PDF"),
     ("cv.pdf", b"", "empty"),
@@ -78,4 +78,4 @@ def test_upload_endpoint_returns_text_but_never_stores_it(monkeypatch):
     code, out = post(resume.handler, {"X-Dashboard-Key": "pw"}, {"file": "%%%not-base64", "filename": "cv.pdf"})
     assert code == 400
     code, out = post(resume.handler, {"X-Dashboard-Key": "pw"}, {"file": base64.b64encode(b"MZ").decode(), "filename": "cv.pdf"})
-    assert code == 400 and "PDF or DOCX" in out["error"]
+    assert code == 400 and "PDF, DOCX or .tex" in out["error"]

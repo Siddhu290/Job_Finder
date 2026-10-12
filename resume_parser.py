@@ -27,7 +27,16 @@ def extract_text(filename: str, data: bytes) -> str:
         return _pdf(data)
     if name.endswith(".docx") and data.startswith(b"PK"):
         return _docx(data)
-    raise ResumeFileError("Upload a PDF or DOCX file")
+    if name.endswith(".tex"):
+        import latex_resume
+        try:
+            tex = data.decode("utf-8")
+        except UnicodeDecodeError:
+            raise ResumeFileError("The .tex file isn't UTF-8 text") from None
+        if not latex_resume.is_latex(tex):
+            raise ResumeFileError("This .tex file has no \\documentclass / \\begin{document}")
+        return tex.replace("\r\n", "\n")     # kept as LaTeX source, exactly as written
+    raise ResumeFileError("Upload a PDF, DOCX or .tex file")
 
 
 def _pdf(data):

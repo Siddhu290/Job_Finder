@@ -57,8 +57,10 @@ class handler(BaseHTTPRequestHandler):
                     saved = resumes.save(st, body.get("name") or "My resume", text, "upload" if body.get("file") else "pasted")
                 except (resumes.ResumeError, ValueError):
                     saved = None
+                import latex_resume
+                plain = latex_resume.to_plain(text) if latex_resume.is_latex(text) else text
                 try:
-                    profiles.add(c, llm.extract_profile(text, webapi.llm_key(self, st) or None), body.get("name", ""))
+                    profiles.add(c, llm.extract_profile(plain, webapi.llm_key(self, st) or None), body.get("name", ""))
                 except llm.LLMError as e:
                     profile_error = str(e)
                     if not saved:
