@@ -466,7 +466,9 @@ def words(text: str) -> list:
 
 def keyword_vocab(tex: str, description: str, extra=()) -> set:
     """Words an edit may introduce: the job's skills/keywords and the skills the resume already shows."""
-    terms = list(matching.find_skills(description or "")) + list(matching.find_skills(to_plain(tex))) + [str(x) for x in extra]
+    plain = to_plain(tex)
+    terms = list(matching.find_skills(description or "")) + list(matching.find_skills(plain)) + [str(x) for x in extra]
+    terms += own_terms(parse_details(plain))          # skills the user lists themselves (e.g. Django, Frappe) are truthful
     return {w for t in terms for w in words(t)} | GLUE
 
 
@@ -481,6 +483,38 @@ def check_keywords_only(find: str, replace: str, vocab: set) -> str:
     return ""
 
 
+# What tailoring may touch. Everything else (header, education, job titles, companies, places, dates, project names,
+# certifications, headings) stays exactly as the user wrote it.
+_SEC_CMD = re.compile(r"\\(?:sub)?section\*?\{([^}]*)\}|\\rsec\{([^}]*)\}")
+_LOCKED_SECTION = re.compile(r"education|academic|certif|training|course|award|achiev|honou?r|language|interest|hobb|"
+                             r"declaration|personal|reference|publication|position", re.I)
+_CONTENT_SECTION = re.compile(r"skill|summary|profile|objective|about", re.I)
+_ITEM_LINE = re.compile(r"\\item\b|\\[A-Za-z]*[Ii]tem\b")
+
+
+def editable_lines(tex: str) -> list:
+    """Lines tailoring may change: bullets in experience/project-type sections, and every line of the summary and
+    skills sections. Header, education, certifications etc. are locked."""
+    out, section, started = [], None, False
+    for line in tex.split("\n"):
+        if line.strip().startswith("\\begin{document}"):
+            started = True
+            continue
+        m = _SEC_CMD.search(line)
+        if m:
+            section = m.group(1) or m.group(2) or ""
+            continue
+        if not started or section is None or _LOCKED_SECTION.search(section):
+            continue
+        if _ITEM_LINE.search(line) or (_CONTENT_SECTION.search(section) and line.strip() and not line.strip().startswith("%")):
+            out.append(line)
+    return out
+
+
+def in_content(tex: str, text: str) -> bool:
+    return "\n" not in text and any(text in line for line in editable_lines(tex))
+
+
 def check_edit(tex: str, find: str, replace: str, vocab: set | None = None) -> str:
     """'' if the edit is acceptable, else the reason it is rejected. With vocab, edits are keyword-only."""
     if not find.strip() or len(find) > 1500 or len(replace) > 2000:
@@ -488,6 +522,8 @@ def check_edit(tex: str, find: str, replace: str, vocab: set | None = None) -> s
     n = tex.count(find)
     if n != 1:
         return "the text to change was not found exactly once in your LaTeX" if n == 0 else "the text to change appears more than once"
+    if not in_content(tex, find):
+        return "only bullets, the summary and skills may change (names, companies, dates, education stay as they are)"
     cmds_find, cmds_rep = Counter(_CMD.findall(find)), Counter(_CMD.findall(replace))
     if set(cmds_rep) & FORBIDDEN or any(n > cmds_find[c] for c, n in cmds_rep.items()):
         return "it would add LaTeX commands (only wording may change)"
@@ -534,8 +570,8 @@ def check_addition(tex: str, after: str, text: str, evidence: str, original_plai
         return "empty or too long"
     if re.search(r"[\\{}]", text):
         return "LaTeX code isn't allowed in a new bullet"
-    if not _bullet_line(tex, after):
-        return "it must follow an existing bullet"
+    if not _bullet_line(tex, after) or not in_content(tex, after):
+        return "it must follow an existing experience or project bullet"
     ev = _norm(to_plain(evidence))
     if len(ev) < 8 or ev not in _norm(original_plain):
         return "its evidence isn't in your resume"
@@ -606,6 +642,8 @@ Hard rules: never invent experience, employers, dates, numbers, metrics, certifi
 KEYWORDS ONLY: swap a term for the job's wording of the same thing (e.g. "dashboards" -> "Power BI dashboards"
 when the resume shows Power BI), reorder a skills list so the job's skills come first, or add a job keyword the
 resume already supports. Do not rewrite sentences, never change the layout.
+ONLY these parts may change: experience/project bullets, the summary, and skills lines. Never touch the name,
+contact details, education, job titles, company names, places, dates, project names or certifications.
 Each edit is an exact find/replace on the LaTeX source:
 - "find" must be copied character-for-character from the LaTeX source and be unique in it (a bullet's text, a skills line);
 - "replace" keeps every LaTeX command and brace that "find" has, adds none, and escapes & % $ # _ as \\& \\% \\$ \\# \\_.

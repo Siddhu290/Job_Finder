@@ -787,7 +787,7 @@ function latexEditsResult(r, j, jobLabel, jobRef) {
     el("div", { class: "tags", style: "margin:6px 0" }, r.keywords.map(k => el("span", { class: "tag " + (k.in_resume ? "ok" : "warn"), title: k.in_resume ? "Already in your resume" : "Not in your resume: add only if true" }, (k.in_resume ? "✓ " : "+ ") + k.keyword))),
     r.edits.length ? el("div", {},
       el("h3", { style: "margin-top:10px" }, `Keyword changes for this job (${r.edits.length}) — tick the ones to apply`),
-      el("p", { class: "muted" }, "Only keywords change; your layout and sentences stay as they are."),
+      el("p", { class: "muted" }, "Only your bullets, summary and skills can change, and only their keywords. Name, contact details, education, job titles, companies, dates, project names and certifications always stay exactly as they are."),
       el("table", {}, el("tr", {}, el("th", {}, "Apply"), el("th", {}, "Your LaTeX"), el("th", {}, "Becomes"), el("th", {}, "Why")),
         r.edits.map((e, i) => el("tr", {}, el("td", {}, boxes[i]), el("td", { class: "mono" }, e.find), el("td", { class: "mono" }, e.replace),
           el("td", { class: "muted" }, e.reason, e.warning ? el("div", { class: "tag warn" }, "⚠ " + e.warning) : ""))))) : el("p", { class: "notice" }, "No safe keyword changes were suggested for this job."),

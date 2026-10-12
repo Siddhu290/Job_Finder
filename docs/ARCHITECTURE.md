@@ -102,6 +102,12 @@ Module: `latex_resume.py`, with routes `/api/tailor` and `/api/resumes`.
 
 New skills are flagged and left unticked by default. You tick the edits you want.
 
+**What tailoring may touch** (`editable_lines`, enforced in `check_edit` and `check_addition`):
+- **May change:** experience/project bullets, and the summary and skills sections.
+- **Never changes:** the header; education, certification, award and other locked sections; job titles, companies, places, dates; project names; headings. Edits there are rejected even if the AI proposes them.
+- This works for the standard template and for the user's own LaTeX (sections are recognised by their headings).
+- Keyword-only edits may use the job's keywords, the built-in skill list and the skills the user lists themselves.
+
 **New bullets** (at most 4 per job) are allowed only when grounded in the resume, enforced by `check_addition`:
 - each must quote *evidence* copied from the resume;
 - every word must come from that evidence, the bullet it joins, the job's keywords, a list of action verbs or a list of generic nouns;

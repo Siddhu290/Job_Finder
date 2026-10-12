@@ -200,7 +200,7 @@ def test_new_bullet_copies_the_templates_own_formatting_and_cannot_float():
                                "text": "Developed the Django backend with MongoDB for the chatbot", "evidence": "Python, OpenCV, Django, MongoDB"},
                               {"type": "add", "after": "Frameworks: Django, REST APIs",           # not a bullet line
                                "text": "Integrated REST APIs in the Django backend", "evidence": "Frameworks: Django, REST APIs"}], JD_DJ)
-    assert r["applied"] == 1 and "must follow an existing bullet" in r["skipped"][0]["reason"]
+    assert r["applied"] == 1 and "must follow an existing" in r["skipped"][0]["reason"]
     assert "    \\resumeItem{Built an emotion-aware chatbot using OpenCV}\n    \\resumeItem{Developed the Django backend with MongoDB for the chatbot}\n" in r["tex"]
 
 
@@ -315,3 +315,30 @@ def test_my_profile_is_encrypted_and_keeps_one_resume_in_sync(st):
     second = resumes.save_profile(st, {**SAMPLE_PROFILE, "tagline": "Odoo Developer"})["version"]
     assert second["id"] == first["id"] and len(resumes.list_versions(st)) == 1                  # updated, not duplicated
     assert "Odoo Developer" in resumes.tex_for(st, first["id"])
+
+
+def test_tailoring_only_touches_bullets_summary_and_skills():
+    p = lx.clean_profile({**SAMPLE_PROFILE, "summary": "Python developer building ERP and data tools."})
+    tex = lx.render_details(lx.profile_to_details(p))
+    vocab = lx.keyword_vocab(tex, "Python Django PostgreSQL REST APIs Power BI developer " * 5)
+    ok = lambda find, rep: lx.check_edit(tex, find, rep, vocab) == ""
+    # content: allowed
+    assert ok(r"Developed custom ERP modules using \textbf{Python}, XML, and \textbf{PostgreSQL}.",
+              r"Developed custom ERP modules using \textbf{Python}, \textbf{PostgreSQL} and XML.")          # a bullet
+    assert ok("developer building ERP and data tools.", "developer building ERP and data tools with Django.")   # summary
+    assert ok("Django, Frappe, ERPNext", "Django, ERPNext, Frappe")                                         # skills line
+    # everything else: locked, even with job keywords
+    locked = [("Alligator Infosoft (On-Site)", "Alligator Infosoft Python (On-Site)"),                     # company
+              ("Odoo Python Developer", "Python Developer"),                                               # job title
+              ("Sept 2025 – Present", "Sept 2025 – Present Python"),                                       # dates
+              ("MET Institute of Engineering", "MET Institute of Engineering Python"),                     # education
+              ("SIDDHARTH MORE", "SIDDHARTH MORE PYTHON"),                                                  # header
+              ("Symbiosis (2024)", "Symbiosis Python (2024)")]                                              # certification
+    for find, rep in locked:
+        assert "only bullets, the summary and skills" in lx.check_edit(tex, find, rep, vocab), find
+    # new bullets only under experience/project bullets, never under education or certifications
+    vocab_add = lx.keyword_vocab(tex, "Django MongoDB " * 5)
+    assert lx.check_addition(tex, "Deployed on \\textbf{Django} with \\textbf{MongoDB}.", "Developed the Django backend with MongoDB",
+                             "Deployed on Django with MongoDB.", lx.to_plain(tex), vocab_add) == ""
+    assert "must follow an existing" in lx.check_addition(tex, r"\textbf{Machine Learning Training}", "Applied Django",
+                                                          "Deployed on Django with MongoDB.", lx.to_plain(tex), vocab_add)
