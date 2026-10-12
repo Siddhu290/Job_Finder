@@ -108,3 +108,23 @@ def test_recommends_the_closest_tailored_version(st):
     assert r["version"]["name"] == "Acme – Data Analyst" and r["role_match"] == 100       # 'Junior'/'Fresher' ignored
     assert r["skill_overlap"] >= 60 and isinstance(r["ats"], int) and isinstance(r["current_ats"], int)
     assert resumes.recommend(st, "Mechanical Design Engineer", "AutoCAD SolidWorks " * 20) is None   # nothing similar
+
+
+JD_BI = "Data Analyst. Required: SQL, Power BI, Tableau, Excel. You will build dashboards and reports. " * 3
+
+
+@pytest.mark.parametrize("find, replace, ok", [
+    ("Built a sales dashboard in Power BI for 12 regions", "Built a sales dashboard in Power BI and SQL for 12 regions", True),   # adds a JD keyword the resume has
+    (r"\textbf{Languages}{: Python, SQL, R}", r"\textbf{Languages}{: SQL, Python, R}", True),                                     # reorder
+    ("Built a sales dashboard in Power BI for 12 regions", "Spearheaded an enterprise analytics initiative for 12 regions", False),  # rewrite
+    ("Cleaned 50k rows of survey data with Pandas", "Cleaned 50k rows", False),                                                    # removes too much
+    ("Cleaned 50k rows of survey data with Pandas", "Cleaned 50k rows of survey data with Pandas and Tableau", True),              # JD keyword: allowed, flagged later
+])
+def test_keyword_only_edits(find, replace, ok):
+    assert (lx.check_edit(TEX, find, replace, lx.keyword_vocab(TEX, JD_BI)) == "") is ok
+
+
+def test_apply_rechecks_keyword_only_with_the_job():
+    r = lx.apply_edits(TEX, [{"find": "Built a sales dashboard in Power BI for 12 regions",
+                              "replace": "Spearheaded an enterprise analytics initiative for 12 regions"}], JD_BI)
+    assert r["applied"] == 0 and "only keywords" in r["skipped"][0]["reason"]

@@ -483,10 +483,10 @@ function viewResume() {
 }
 function resumeBody(c) {
   const p = c.profiles.find(x => x.id === c.active);
-  const file = el("input", { type: "file", accept: ".pdf,.docx,.tex", hidden: true, async onchange(e) {
+  const upload = async e => {
     const f = e.target.files[0]; if (!f) return;
     try {
-      const name = prompt("Name for this resume (e.g. “Data Analyst – Oct 2026”)", f.name.replace(/\.(pdf|docx)$/i, "")) || "";
+      const name = prompt("Name for this resume (e.g. “Data Analyst – Oct 2026”)", f.name.replace(/\.(pdf|docx|tex)$/i, "")) || "";
       toast("Reading and analysing your resume…", 30000);
       const res = await post("/api/resume", { file: await fileToBase64(f), filename: f.name, name });
       if (res.version) S.resumeId = res.version.id;
@@ -495,11 +495,15 @@ function resumeBody(c) {
       else toast(res.version ? `Saved as “${res.version.name}” in My resumes. Review the profile below.` : "Profile created. Review it below.");
       render(); load();
     } catch (err) { fail(err) } finally { e.target.value = "" }
-  } });
+  };
+  const file = el("input", { type: "file", accept: ".pdf,.docx", hidden: true, onchange: upload });
+  const texFile = el("input", { type: "file", accept: ".tex", hidden: true, onchange: upload });
   const head = el("section", { class: "panel" }, el("div", { class: "row" },
     c.profiles.length > 0 && el("label", { class: "f" }, "Active profile", el("select", { onchange(e) { saveProfile({ action: "activate", id: e.target.value }, "Profile switched").then(render) } },
       c.profiles.map(x => el("option", { value: x.id, selected: x.id === c.active || null }, x.name)))),
     el("button", { class: "btn primary", onclick() { file.click() } }, "Upload resume (PDF/DOCX)"), file,
+    el("button", { class: "btn", title: "Your LaTeX resume: for each job only its keywords are changed; the layout stays exactly as it is",
+      onclick() { texFile.click() } }, "Upload LaTeX template (.tex)"), texFile,
     p ? el("label", { class: "chk" }, el("input", { type: "checkbox", checked: c.use_in_search || null, onchange(e) { saveProfile({ action: "use_in_search", value: e.target.checked }) } }), "Use this profile's roles in searches") : "",
     p ? el("button", { class: "btn danger", onclick() { if (confirm(`Delete profile "${p.name}"? Your saved resumes are kept.`)) saveProfile({ action: "delete", id: p.id }, "Deleted").then(render) } }, "Delete profile") : ""));
   const profilePanel = !p ? el("div", { class: "empty" }, "No resume profile yet. Upload your resume to get started.") : (() => {
@@ -600,7 +604,7 @@ function atsPanel() {
           try { out.replaceChildren(atsResult(await post("/api/ats", { resume_id: S.resumeId, ...target() }))) } catch (e) { out.replaceChildren(el("p", { class: "notice bad" }, e.message)) } } }, "Check ATS score"),
         el("button", { class: "btn", disabled: !v || null, async onclick() {
           out.replaceChildren(el("p", { class: "muted" }, el("span", { class: "spinner" }), " Asking the AI for truthful suggestions…"));
-          try { out.replaceChildren(tailorResult(await post("/api/tailor", { resume_id: S.resumeId, ...target() }), pick.value ? job(pick.value) : null, label())) }
+          try { out.replaceChildren(tailorResult(await post("/api/tailor", { resume_id: S.resumeId, ...target() }), pick.value ? job(pick.value) : null, label(), target())) }
           catch (e) { out.replaceChildren(el("p", { class: "notice bad" }, e.message)) } } }, "AI suggestions & tailored draft")),
       rec, jdBox, out);
     recommend();
@@ -624,8 +628,8 @@ function atsResult(r) {
       : el("p", { class: "notice ok" }, "Nothing major to fix for this job."),
     el("p", { class: `muted` }, r.note), el("span", { class: `tag ${tone}` }, `${r.words} words · ${r.bullets} bullets · ${r.bullets_with_numbers} with numbers`));
 }
-function tailorResult(r, j, jobLabel) {
-  if (r.mode === "latex") return latexEditsResult(r, j, jobLabel);
+function tailorResult(r, j, jobLabel, jobRef) {
+  if (r.mode === "latex") return latexEditsResult(r, j, jobLabel, jobRef || {});
   const draft = el("textarea", { rows: 18, "aria-label": "Tailored draft" }, r.draft || "");
   return el("div", { style: "margin-top:12px" },
     r.warnings.map(w => el("p", { class: "notice" }, "⚠ " + w)),
@@ -649,7 +653,7 @@ function tailorResult(r, j, jobLabel) {
       el("button", { class: "btn", onclick() { printText(draft.value) } }, "Print / save PDF")));
 }
 // ---------- LaTeX: your own .tex, per-job edits, copy / download / Overleaf / PDF in the browser ----------
-function latexEditsResult(r, j, jobLabel) {
+function latexEditsResult(r, j, jobLabel, jobRef) {
   const boxes = r.edits.map(e => el("input", { type: "checkbox", checked: !e.warning || null, "aria-label": "Apply edit " + e.id }));
   const out = el("div", { "aria-live": "polite" });
   return el("div", { style: "margin-top:12px" },
@@ -657,14 +661,15 @@ function latexEditsResult(r, j, jobLabel) {
     r.summary ? el("p", {}, r.summary) : "",
     el("div", { class: "tags", style: "margin:6px 0" }, r.keywords.map(k => el("span", { class: "tag " + (k.in_resume ? "ok" : "warn"), title: k.in_resume ? "Already in your resume" : "Not in your resume: add only if true" }, (k.in_resume ? "✓ " : "+ ") + k.keyword))),
     r.edits.length ? el("div", {},
-      el("h3", { style: "margin-top:10px" }, `Suggested edits to your LaTeX (${r.edits.length}) — tick the ones to apply`),
+      el("h3", { style: "margin-top:10px" }, `Keyword changes for this job (${r.edits.length}) — tick the ones to apply`),
+      el("p", { class: "muted" }, "Only keywords change; your layout and sentences stay as they are."),
       el("table", {}, el("tr", {}, el("th", {}, "Apply"), el("th", {}, "Your LaTeX"), el("th", {}, "Becomes"), el("th", {}, "Why")),
         r.edits.map((e, i) => el("tr", {}, el("td", {}, boxes[i]), el("td", { class: "mono" }, e.find), el("td", { class: "mono" }, e.replace),
           el("td", { class: "muted" }, e.reason, e.warning ? el("div", { class: "tag warn" }, "⚠ " + e.warning) : ""))))) : el("p", { class: "notice" }, "No safe edits were suggested for this job."),
     el("div", { class: "row", style: "margin-top:8px" },
       el("button", { class: "btn primary", async onclick() {
         try {
-          const res = await post("/api/tailor", { action: "latex_apply", resume_id: S.resumeId, edits: r.edits.filter((_, i) => boxes[i].checked) });
+          const res = await post("/api/tailor", { action: "latex_apply", resume_id: S.resumeId, ...jobRef, edits: r.edits.filter((_, i) => boxes[i].checked) });
           out.replaceChildren(res.skipped.length ? el("p", { class: "notice" }, `${res.skipped.length} edit(s) skipped: ` + res.skipped.map(s => s.reason).join("; ")) : "",
             el("p", { class: "notice ok" }, `${res.applied} edit(s) applied. Check the result, then copy it, open it in Overleaf or make the PDF.`),
             latexTools(res.tex, jobLabel, j));
