@@ -268,6 +268,64 @@ def check_edit(tex: str, find: str, replace: str, vocab: set | None = None) -> s
     return check_keywords_only(find, replace, vocab) if vocab is not None else ""
 
 
+# ---------------- new bullets, grounded in the resume ----------------
+MAX_ADDITIONS = 4
+ACTION_VERBS = {"built", "developed", "designed", "implemented", "created", "integrated", "deployed", "automated", "analyzed",
+                "analysed", "used", "applied", "wrote", "optimized", "optimised", "trained", "cleaned", "visualized", "visualised",
+                "maintained", "configured", "tested", "documented", "collaborated", "managed", "led", "improved", "delivered",
+                "prepared", "performed", "modeled", "modelled", "engineered", "migrated", "customized", "customised",
+                "monitored", "worked", "supported", "handled", "contributed", "leveraged", "utilized", "utilised"}
+# generic nouns a bullet may need; they describe *what* was built and add no new facts (skills, numbers, employers)
+NEUTRAL = {"application", "applications", "app", "system", "systems", "data", "feature", "features", "module", "modules",
+           "backend", "back-end", "frontend", "front-end", "web", "user", "users", "pipeline", "pipelines", "project", "projects",
+           "solution", "solutions", "report", "reports", "reporting", "dashboard", "dashboards", "workflow", "workflows",
+           "model", "models", "service", "services", "interface", "end-to-end", "team", "client", "clients", "business",
+           "requirements", "analysis", "insights", "logic", "components", "database", "databases", "queries", "code"}
+
+
+def _bullet_line(tex: str, after: str):
+    """(start, end, line) of the one line that holds bullet text `after` (an \\item or \\…Item{…} line), else None."""
+    if not after.strip() or tex.count(after) != 1:
+        return None
+    i = tex.index(after)
+    start = tex.rfind("\n", 0, i) + 1
+    end = tex.find("\n", i)
+    end = len(tex) if end == -1 else end
+    line = tex[start:end]
+    if not re.search(r"\\item\b|\\[A-Za-z]*[Ii]tem\b", line) or line.count(after) != 1:
+        return None
+    return start, end, line
+
+
+def check_addition(tex: str, after: str, text: str, evidence: str, original_plain: str, vocab: set) -> str:
+    """'' if a new bullet is acceptable: placed after an existing bullet, plain text, backed word-for-word by evidence
+    quoted from the resume (plus job keywords, action verbs and generic nouns), no new numbers."""
+    if not text.strip() or len(text) > 300:
+        return "empty or too long"
+    if re.search(r"[\\{}]", text):
+        return "LaTeX code isn't allowed in a new bullet"
+    if not _bullet_line(tex, after):
+        return "it must follow an existing bullet"
+    ev = _norm(to_plain(evidence))
+    if len(ev) < 8 or ev not in _norm(original_plain):
+        return "its evidence isn't in your resume"
+    if _numbers(text) - _numbers(evidence):
+        return "it adds numbers that are not in your resume"
+    backed = set(words(to_plain(evidence))) | set(words(to_plain(after)))     # the evidence and the bullet it joins
+    unknown = [w for w in words(text) if w not in backed | vocab | ACTION_VERBS | NEUTRAL]
+    if unknown:
+        return "it uses words your resume doesn't back up (" + ", ".join(dict.fromkeys(unknown[:4])) + ")"
+    if _norm(text) in _norm(original_plain):
+        return "that bullet is already in your resume"
+    return ""
+
+
+def insert_bullet(tex: str, after: str, text: str) -> str:
+    """Insert a new bullet below `after`, reusing that line's exact formatting (\\item, \\resumeItem{…}, indentation)."""
+    _, end, line = _bullet_line(tex, after)
+    return tex[:end] + "\n" + line.replace(after, tex_escape(text.strip()), 1) + tex[end:]
+
+
 def guard_edits(tex: str, result: dict, description: str = "") -> dict:
     plain = to_plain(tex)
     vocab = keyword_vocab(tex, description, result.get("keywords") or [])
@@ -294,8 +352,21 @@ def guard_edits(tex: str, result: dict, description: str = "") -> dict:
         k = str(k).strip()[:50]
         if k and k.lower() not in {x["keyword"].lower() for x in keywords}:
             keywords.append({"keyword": k, "in_resume": _norm(k) in norm})
-    warnings = [f"{len(rejected)} suggested edit(s) were removed: " + "; ".join(sorted(set(rejected)))] if rejected else []
-    return {"mode": "latex", "edits": edits, "keywords": keywords[:25], "warnings": warnings,
+    additions = []
+    for a in (result.get("additions") or [])[:MAX_ADDITIONS * 2]:
+        if not isinstance(a, dict):
+            continue
+        after, text, ev = str(a.get("after", "")), str(a.get("text", "")).strip(), str(a.get("evidence", ""))
+        why = check_addition(tex, after, text, ev, plain, vocab)
+        if why:
+            rejected.append("new bullet: " + why)
+            continue
+        additions.append({"id": len(additions) + 1, "type": "add", "after": after, "text": text, "evidence": ev[:300],
+                          "reason": str(a.get("reason", ""))[:200]})
+        if len(additions) == MAX_ADDITIONS:
+            break
+    warnings = [f"{len(rejected)} suggestion(s) were removed: " + "; ".join(sorted(set(rejected)))] if rejected else []
+    return {"mode": "latex", "edits": edits, "additions": additions, "keywords": keywords[:25], "warnings": warnings,
             "summary": str(result.get("summary", ""))[:600]}
 
 
@@ -309,9 +380,14 @@ Each edit is an exact find/replace on the LaTeX source:
 - "find" must be copied character-for-character from the LaTeX source and be unique in it (a bullet's text, a skills line);
 - "replace" keeps every LaTeX command and brace that "find" has, adds none, and escapes & % $ # _ as \\& \\% \\$ \\# \\_.
 If the job wants something the resume does not show, list it under keywords; do not write it into the resume.
+NEW BULLETS (at most 4, only where the job asks for something the resume shows but under-describes): a short
+plain-text bullet placed after an existing bullet ("after" = that bullet's text copied exactly from the LaTeX) in
+the same entry. It may only state what "evidence" proves; "evidence" is a phrase copied exactly from the resume
+(e.g. a skills line or another bullet). No LaTeX, no numbers that the evidence lacks.
 Reply with JSON only:
 {"summary": "one sentence on how the resume was angled for this job",
  "edits": [{"find": "...", "replace": "...", "reason": "why this helps for this job"}],
+ "additions": [{"after": "...", "text": "...", "evidence": "...", "reason": "which job requirement it answers"}],
  "keywords": ["important terms from the job description"]}"""
 
 
@@ -331,7 +407,17 @@ def apply_edits(tex: str, edits, description: str = "") -> dict:
     trusted), keyword-only included, so a rejected or conflicting edit is skipped and reported, never forced."""
     out, applied, skipped = tex, 0, []
     vocab = keyword_vocab(tex, description)
-    for e in edits or []:
+    plain = to_plain(tex)
+    adds = [e for e in edits or [] if isinstance(e, dict) and e.get("type") == "add"][:MAX_ADDITIONS]
+    for a in adds:                      # new bullets first: keyword edits may change the text they are anchored to
+        after, text, ev = str(a.get("after", "")), str(a.get("text", "")), str(a.get("evidence", ""))
+        why = check_addition(out, after, text, ev, plain, vocab)
+        if why:
+            skipped.append({"find": text[:80], "reason": why})
+            continue
+        out = insert_bullet(out, after, text)
+        applied += 1
+    for e in [e for e in edits or [] if not (isinstance(e, dict) and e.get("type") == "add")]:
         find, rep = str((e or {}).get("find", "")), str((e or {}).get("replace", ""))
         why = check_edit(out, find, rep, vocab)
         if why:

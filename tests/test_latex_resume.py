@@ -51,7 +51,7 @@ def test_guard_edits_flags_new_skills_and_reports_rejections():
         {"find": "Cleaned 50k rows of survey data with Pandas", "replace": "Cleaned 50k rows of survey data with Pandas and Tableau", "reason": "JD"},
         {"find": "Built a sales dashboard", "replace": "Built a sales dashboard \\write18{rm}", "reason": "x"}]})
     assert out["mode"] == "latex" and len(out["edits"]) == 1 and "Tableau" in out["edits"][0]["warning"]
-    assert "1 suggested edit(s) were removed" in out["warnings"][0]
+    assert "1 suggestion(s) were removed" in out["warnings"][0]
     assert {k["keyword"]: k["in_resume"] for k in out["keywords"]} == {"Power BI": True, "Tableau": False}
 
 
@@ -164,3 +164,41 @@ def test_one_page_fit_level_follows_length_and_is_set_in_the_tex():
     tex = lx.to_latex(short)
     assert r"\def\fitlevel{0}" in tex and "FITLEVEL" not in tex
     assert r"\pdfinterwordspaceon" in tex and r"\hyphenpenalty=10000" in tex      # ATS: real spaces, no split words
+
+
+JAKE = r"""\documentclass{article}
+\newcommand{\resumeItem}[1]{\item\small{#1}}
+\begin{document}
+\section{Projects}
+\textbf{Mood Mate} $|$ \emph{Python, OpenCV, Django, MongoDB}
+\begin{itemize}
+    \resumeItem{Built an emotion-aware chatbot using OpenCV}
+\end{itemize}
+\section{Skills}
+Frameworks: Django, REST APIs
+\end{document}
+"""
+JD_DJ = "Python Developer. Required: Django, REST APIs, MongoDB, Python. Build backend services. " * 3
+
+
+@pytest.mark.parametrize("text, evidence, ok", [
+    ("Developed the Django backend with MongoDB for the chatbot", "Python, OpenCV, Django, MongoDB", True),
+    ("Integrated REST APIs in the Django backend", "Frameworks: Django, REST APIs", True),
+    ("Led a team of 5 engineers on the chatbot", "Python, OpenCV, Django, MongoDB", False),          # new number + unbacked words
+    ("Deployed the chatbot on AWS Kubernetes", "Python, OpenCV, Django, MongoDB", False),           # skills not in resume
+    ("Developed the Django backend", "Django experts wanted", False),                                # evidence not in resume
+    (r"Built \input{x} backend", "Python, OpenCV, Django, MongoDB", False),                           # no LaTeX in a bullet
+])
+def test_new_bullets_must_be_backed_by_the_resume(text, evidence, ok):
+    after = "Built an emotion-aware chatbot using OpenCV"
+    why = lx.check_addition(JAKE, after, text, evidence, lx.to_plain(JAKE), lx.keyword_vocab(JAKE, JD_DJ))
+    assert (why == "") is ok, why
+
+
+def test_new_bullet_copies_the_templates_own_formatting_and_cannot_float():
+    r = lx.apply_edits(JAKE, [{"type": "add", "after": "Built an emotion-aware chatbot using OpenCV",
+                               "text": "Developed the Django backend with MongoDB for the chatbot", "evidence": "Python, OpenCV, Django, MongoDB"},
+                              {"type": "add", "after": "Frameworks: Django, REST APIs",           # not a bullet line
+                               "text": "Integrated REST APIs in the Django backend", "evidence": "Frameworks: Django, REST APIs"}], JD_DJ)
+    assert r["applied"] == 1 and "must follow an existing bullet" in r["skipped"][0]["reason"]
+    assert "    \\resumeItem{Built an emotion-aware chatbot using OpenCV}\n    \\resumeItem{Developed the Django backend with MongoDB for the chatbot}\n" in r["tex"]

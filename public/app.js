@@ -655,6 +655,8 @@ function tailorResult(r, j, jobLabel, jobRef) {
 // ---------- LaTeX: your own .tex, per-job edits, copy / download / Overleaf / PDF in the browser ----------
 function latexEditsResult(r, j, jobLabel, jobRef) {
   const boxes = r.edits.map(e => el("input", { type: "checkbox", checked: !e.warning || null, "aria-label": "Apply edit " + e.id }));
+  const adds = r.additions || [];
+  const addBoxes = adds.map(a => el("input", { type: "checkbox", "aria-label": "Add bullet " + a.id }));   // unticked: confirm each
   const out = el("div", { "aria-live": "polite" });
   return el("div", { style: "margin-top:12px" },
     r.warnings.map(w => el("p", { class: "notice" }, "⚠ " + w)),
@@ -665,11 +667,18 @@ function latexEditsResult(r, j, jobLabel, jobRef) {
       el("p", { class: "muted" }, "Only keywords change; your layout and sentences stay as they are."),
       el("table", {}, el("tr", {}, el("th", {}, "Apply"), el("th", {}, "Your LaTeX"), el("th", {}, "Becomes"), el("th", {}, "Why")),
         r.edits.map((e, i) => el("tr", {}, el("td", {}, boxes[i]), el("td", { class: "mono" }, e.find), el("td", { class: "mono" }, e.replace),
-          el("td", { class: "muted" }, e.reason, e.warning ? el("div", { class: "tag warn" }, "⚠ " + e.warning) : ""))))) : el("p", { class: "notice" }, "No safe edits were suggested for this job."),
+          el("td", { class: "muted" }, e.reason, e.warning ? el("div", { class: "tag warn" }, "⚠ " + e.warning) : ""))))) : el("p", { class: "notice" }, "No safe keyword changes were suggested for this job."),
+    adds.length ? el("div", {},
+      el("h3", { style: "margin-top:10px" }, `New bullets for this job (${adds.length}) — tick only the ones that are true`),
+      el("p", { class: "muted" }, "Each one only restates something your resume already shows (quoted below) and is added under the bullet shown, in your template's own format."),
+      el("table", {}, el("tr", {}, el("th", {}, "Add"), el("th", {}, "New bullet"), el("th", {}, "Goes after"), el("th", {}, "Based on / why")),
+        adds.map((a, i) => el("tr", {}, el("td", {}, addBoxes[i]), el("td", {}, el("b", {}, a.text)), el("td", { class: "mono" }, a.after),
+          el("td", { class: "muted" }, "“" + a.evidence + "”", el("div", {}, a.reason)))))) : "",
     el("div", { class: "row", style: "margin-top:8px" },
       el("button", { class: "btn primary", async onclick() {
         try {
-          const res = await post("/api/tailor", { action: "latex_apply", resume_id: S.resumeId, ...jobRef, edits: r.edits.filter((_, i) => boxes[i].checked) });
+          const res = await post("/api/tailor", { action: "latex_apply", resume_id: S.resumeId, ...jobRef,
+            edits: [...r.edits.filter((_, i) => boxes[i].checked), ...adds.filter((_, i) => addBoxes[i].checked)] });
           out.replaceChildren(res.skipped.length ? el("p", { class: "notice" }, `${res.skipped.length} edit(s) skipped: ` + res.skipped.map(s => s.reason).join("; ")) : "",
             el("p", { class: "notice ok" }, `${res.applied} edit(s) applied. Check the result, then copy it, open it in Overleaf or make the PDF.`),
             latexTools(res.tex, jobLabel, j));

@@ -100,7 +100,14 @@ Module: `latex_resume.py`, with routes `/api/tailor` and `/api/resumes`.
 - braces stay balanced;
 - it adds no new numbers.
 
-New skills are flagged and left unticked by default. You tick the edits you want. `apply_edits` re-checks every edit on the server before applying it, so the layout never changes.
+New skills are flagged and left unticked by default. You tick the edits you want.
+
+**New bullets** (at most 4 per job) are allowed only when grounded in the resume, enforced by `check_addition`:
+- each must quote *evidence* copied from the resume;
+- every word must come from that evidence, the bullet it joins, the job's keywords, a list of action verbs or a list of generic nouns;
+- no new numbers and no LaTeX.
+
+It is inserted under an existing bullet using that line's own formatting (`\item`, `\resumeItem{}`, indentation), so the layout is unchanged. New bullets are unticked until the user confirms them. `apply_edits` re-checks every edit on the server before applying it, so the layout never changes.
 
 **Plain-text resumes: the default layout for every user without their own `.tex`.** `to_latex` places the text into a fixed template modelled on the owner's sample resume:
 - centred name in capitals, italic tagline, one contact line separated by "•";

@@ -49,7 +49,7 @@ class handler(BaseHTTPRequestHandler):
             if body.get("job_id"):
                 found = webapi.job_text(webapi.store(self), str(body["job_id"]))
                 desc = found[2] if found else desc
-            return webapi.send(self, 200, latex_resume.apply_edits(tex[:latex_resume.MAX_TEX], edits[:latex_resume.MAX_EDITS], desc))
+            return webapi.send(self, 200, latex_resume.apply_edits(tex[:latex_resume.MAX_TEX], edits[:latex_resume.MAX_EDITS + latex_resume.MAX_ADDITIONS], desc))
         if not webapi.rate_ok(self, "tailor", 10):
             return webapi.send(self, 429, {"error": "Too many requests; wait a minute"})
         from integrations.google_sheets import SheetsError
