@@ -4,6 +4,9 @@ POST {"action": "save", "name", "text", "source", "job"} -> new version
 POST {"action": "get" | "delete", "id"}  |  {"action": "rename", "id", "name"}
 POST {"action": "details", "id"} -> details read from the resume (or the user's checked ones) + what to check
 POST {"action": "save_details", "id", "details"} -> validated, stored encrypted; the template is built from them
+POST {"action": "profile_get"} -> My Profile (standard fields) + what to add/fix
+POST {"action": "profile_save", "profile"} -> stored encrypted; "Resume from my profile" is created/updated from it
+POST {"action": "profile_import", "id"} -> a saved resume mapped onto the standard profile fields (not saved yet)
 POST {"action": "recommend", "job_id" | "job_text"+"job_title", "current_id"} -> closest tailored version for this job (no AI)
 A save with "job_id" remembers that job's role and skills, so the version can be recommended for similar jobs."""
 import os
@@ -59,6 +62,25 @@ class handler(BaseHTTPRequestHandler):
                 v = resumes.set_details(st, vid, d)
                 webapi.audit(st, "resume", "details checked", detail=v["name"])
                 return webapi.send(self, 200, {"version": v, "details": d, "issues": latex_resume.check_details(d)})
+            if action == "profile_get":
+                import latex_resume
+                prof = resumes.get_profile(st) or latex_resume.empty_profile()
+                return webapi.send(self, 200, {"profile": prof, "issues": latex_resume.check_profile(prof),
+                                               "version_id": (st.get_json(resumes.PROFILE_DOC) or {}).get("version_id", "")})
+            if action == "profile_save":
+                import latex_resume
+                try:
+                    out = resumes.save_profile(st, body.get("profile"))
+                except ValueError as e:
+                    return webapi.send(self, 400, {"error": str(e)})
+                webapi.audit(st, "resume", "profile saved", detail="")
+                return webapi.send(self, 200, {**out, "issues": latex_resume.check_profile(out["profile"])})
+            if action == "profile_import":
+                import latex_resume
+                text = resumes.get_text(st, vid)
+                d = resumes.get_details(st, vid) or latex_resume.parse_details(latex_resume.to_plain(text) if latex_resume.is_latex(text) else text)
+                prof = latex_resume.details_to_profile(d)
+                return webapi.send(self, 200, {"profile": prof, "issues": latex_resume.check_profile(prof)})
             if action == "recommend":
                 title, desc = str(body.get("job_title", ""))[:120], str(body.get("job_text", ""))[:20000]
                 if body.get("job_id"):

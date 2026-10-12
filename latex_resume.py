@@ -31,40 +31,45 @@ _SECTION_PREFIX = r"(?:(?:professional|technical|key|academic|work|relevant|sele
 _SECTION = re.compile(rf"^{_SECTION_PREFIX}{_SECTION_WORD}(?:\s+(?:and|&)\s+{_SECTION_PREFIX}{_SECTION_WORD})?\s*:?\s*$", re.I)
 _BULLET = re.compile(r"^\s*(?:[-•*–▪●◦]|\d{1,2}[.)])\s+")
 _LINK = re.compile(r"(?P<mail>[\w.+-]+@[\w-]+(?:\.[\w-]+)+)|(?P<url>(?:https?://|www\.)\S+|(?:linkedin\.com|github\.com)/\S+)")
-TEX_PREAMBLE = r"""\documentclass[10pt,a4paper]{article}
-\def\fitlevel{FITLEVEL} % one-page fit: 0 = roomy ... 4 = tightest (chosen from length; PDF in browser lowers it if needed)
+TEX_PREAMBLE = r"""\documentclass[a4paper,11pt]{article}
+\def\fitlevel{FITLEVEL} % one-page fit: 0 = the standard spacing ... 4 = tightest (PDF in browser picks the roomiest that fits)
 \usepackage[utf8]{inputenc}
 \usepackage[T1]{fontenc}
-\usepackage{lmodern}
+% Times where available (Overleaf); the in-browser engine has no Times fonts and uses Latin Modern instead
+\IfFileExists{ptmr8t.tfm}{\usepackage{times}}{\usepackage{lmodern}}
 \usepackage{geometry}
+\usepackage{xcolor}
 \ifcase\fitlevel
-  \geometry{a4paper,top=0.6in,bottom=0.6in,left=0.7in,right=0.7in}\def\fs{11}\def\bl{13.6}\def\secgap{11pt}\def\entgap{6pt}\def\itemgap{2pt}
+  \geometry{a4paper,left=0.5in,right=0.5in,top=0.45in,bottom=0.45in}\def\fs{11}\def\bl{13.6}\def\secgap{10pt}\def\secafter{6pt}\def\entgap{4pt}\def\itemgap{2pt}\def\ls{1.05}
 \or
-  \geometry{a4paper,top=0.55in,bottom=0.55in,left=0.65in,right=0.65in}\def\fs{10.5}\def\bl{12.9}\def\secgap{9pt}\def\entgap{5pt}\def\itemgap{1.5pt}
+  \geometry{a4paper,left=0.5in,right=0.5in,top=0.45in,bottom=0.45in}\def\fs{10.5}\def\bl{12.9}\def\secgap{8pt}\def\secafter{5pt}\def\entgap{3pt}\def\itemgap{1.5pt}\def\ls{1.04}
 \or
-  \geometry{a4paper,top=0.5in,bottom=0.5in,left=0.6in,right=0.6in}\def\fs{10}\def\bl{12.2}\def\secgap{8pt}\def\entgap{4pt}\def\itemgap{1pt}
+  \geometry{a4paper,left=0.45in,right=0.45in,top=0.4in,bottom=0.4in}\def\fs{10}\def\bl{12.2}\def\secgap{7pt}\def\secafter{4pt}\def\entgap{2.5pt}\def\itemgap{1pt}\def\ls{1.02}
 \or
-  \geometry{a4paper,top=0.45in,bottom=0.45in,left=0.55in,right=0.55in}\def\fs{10}\def\bl{11.8}\def\secgap{6pt}\def\entgap{2.5pt}\def\itemgap{0pt}
+  \geometry{a4paper,left=0.45in,right=0.45in,top=0.4in,bottom=0.4in}\def\fs{10}\def\bl{11.8}\def\secgap{5pt}\def\secafter{3pt}\def\entgap{2pt}\def\itemgap{0pt}\def\ls{1}
 \else
-  \geometry{a4paper,top=0.4in,bottom=0.4in,left=0.5in,right=0.5in}\def\fs{9.5}\def\bl{11.2}\def\secgap{5pt}\def\entgap{2pt}\def\itemgap{0pt}
+  \geometry{a4paper,left=0.4in,right=0.4in,top=0.35in,bottom=0.35in}\def\fs{9.5}\def\bl{11.2}\def\secgap{4pt}\def\secafter{2pt}\def\entgap{1.5pt}\def\itemgap{0pt}\def\ls{1}
 \fi
-\usepackage[hidelinks]{hyperref}
+\usepackage{hyperref}
+\hypersetup{colorlinks=true,urlcolor=teal,linkcolor=teal}
 \input{glyphtounicode}
 \pdfgentounicode=1 % text stays selectable and readable by ATS software
 \pdfinterwordspaceon % real space characters in the PDF, so ATS text extraction never glues words together
 \pdfobjcompresslevel=0 % plain page objects, so the in-browser PDF step can count pages
-% Plain LaTeX only (no titlesec/enumitem/marvosym), so it compiles in the in-browser engine and on Overleaf.
+% Plain LaTeX only (no titlesec/enumitem), so it compiles in the in-browser engine and on Overleaf.
 \pagestyle{empty}
 \setlength{\parindent}{0pt}
 \setlength{\parskip}{0pt}
+\linespread{\ls}
 \AtBeginDocument{\fontsize{\fs}{\bl}\selectfont\raggedright}
 \hyphenpenalty=10000 \exhyphenpenalty=10000 % never split words: cleaner, and ATS keyword matching stays intact
-\newcommand{\rsec}[1]{\par\addvspace{\secgap}{\bfseries\MakeUppercase{#1}}\par\vspace{2pt}\hrule height 0.6pt\vspace{3pt}}
+\newcommand{\sectiondivider}{\par\vspace{0.4em}\hrule\vspace{0.4em}}
+\newcommand{\rsec}[1]{\sectiondivider\addvspace{\secgap}{\large\bfseries\MakeUppercase{#1}}\par\vspace{\secafter}}
 \newcommand{\entry}[2]{\par\addvspace{\entgap}\textbf{#1}\hfill #2\par}
 \newcommand{\etitle}[1]{\par\addvspace{\entgap}\textbf{#1}\par}
 \newcommand{\subentry}[2]{#1\hfill #2\par}
-\newenvironment{bullets}{\begin{list}{\textbullet}{\setlength{\leftmargin}{1.3em}\setlength{\labelwidth}{0.8em}\setlength{\labelsep}{0.5em}%
-  \setlength{\itemsep}{\itemgap}\setlength{\parsep}{0pt}\setlength{\topsep}{1pt}\setlength{\partopsep}{0pt}}}{\end{list}}
+\newenvironment{bullets}{\begin{list}{\textbullet}{\setlength{\leftmargin}{1em}\setlength{\labelwidth}{0.6em}\setlength{\labelsep}{0.4em}%
+  \setlength{\itemsep}{\itemgap}\setlength{\parsep}{0pt}\setlength{\topsep}{2pt}\setlength{\partopsep}{0pt}}}{\end{list}}
 """
 
 
@@ -317,17 +322,54 @@ def details_to_text(d: dict) -> str:
     return "\n".join(details_lines(d))
 
 
+def own_terms(d: dict) -> list:
+    """Tech names the user lists themselves: Skills lines ("Frameworks: Django, Frappe") and project tech stacks."""
+    terms = []
+    for sec in d.get("sections", []):
+        for b in sec["blocks"]:
+            src = b.get("text", "") if b["type"] == "line" and "skill" in sec["title"].lower() else \
+                (re.split(r"\s+[–—|-]\s+", b["title"], maxsplit=1) + [""])[1] if b["type"] == "entry" and "project" in sec["title"].lower() else ""
+            for t in re.split(r"[,;/]|\(|\)", src):
+                t = t.strip()
+                if 2 <= len(t) <= 30 and not re.fullmatch(r"(advanced|intermediate|basic|beginner|expert)", t, re.I):
+                    terms.append(t)
+    return sorted(set(terms), key=len, reverse=True)
+
+
+def _tex_rich(text: str, terms=()) -> str:
+    """Like _tex_inline, plus tech names in bold, as in the standard format: the built-in skill list and the user's
+    own listed skills (terms)."""
+    if _LINK.search(text or ""):
+        return _tex_inline(text)
+    found = [(m.start(), m.end()) for k, rx in matching._SKILL_RX.items() if k != "R" for m in rx.finditer(text or "")]
+    found += [(m.start(), m.end()) for t in terms
+              for m in re.finditer(rf"(?<![A-Za-z0-9]){re.escape(t)}(?![A-Za-z0-9])", text or "", re.I)]
+    spans = sorted(found, key=lambda x: (x[0], -x[1]))
+    out, pos = [], 0
+    for a, b in spans:
+        if a < pos:
+            continue                      # overlapping match (e.g. "Power BI" vs "BI"): the longer, earlier one wins
+        out += [tex_escape(text[pos:a]), r"\textbf{" + tex_escape(text[a:b]) + "}"]
+        pos = b
+    return "".join(out) + tex_escape(text[pos:])
+
+
 def render_details(d: dict) -> str:
     """The default one-page template filled from (checked) details. Every value is escaped."""
     body = [r"\begin{document}"]
     if d.get("name"):
-        body += [r"\begin{center}", r"{\Large\bfseries " + tex_escape(d["name"].upper()) + r"}\\[2pt]"]
+        body += [r"\begin{center}", r"{\Large\bfseries " + tex_escape(d["name"].upper()) + r"}\\[4pt]"]
         if d.get("tagline"):
-            body.append(r"{\itshape " + tex_escape(d["tagline"]) + r"}\\[2pt]")
+            body.append(r"{\small\itshape " + tex_escape(d["tagline"]) + r"}\\[4pt]")
         if d.get("contacts"):
             body.append(r"{\small " + r" \textbullet{} ".join(_tex_inline(c) for c in d["contacts"]) + "}")
-        body += [r"\end{center}", r"\vspace{-6pt}"]
-    bullets = lambda items: ([r"\begin{bullets}"] + [r"\item " + _tex_inline(x) for x in items] + [r"\end{bullets}"]) if items else []
+        body += [r"\end{center}", r"\vspace{-4pt}"]
+    terms = own_terms(d)
+    bullets = lambda items: ([r"\begin{bullets}"] + [r"\item " + _tex_rich(x, terms) for x in items] + [r"\end{bullets}"]) if items else []
+
+    def named(item):                      # certifications etc.: the name in bold, the issuer after "–" plain
+        parts = re.split(r"\s+[–—-]\s+", item, maxsplit=1)
+        return r"\textbf{" + _tex_inline(parts[0]) + "}" + ((" – " + _tex_inline(parts[1])) if len(parts) == 2 else "")
     for sec in d.get("sections", []):
         if sec["title"]:
             body.append(r"\rsec{" + tex_escape(sec["title"]) + "}")
@@ -345,10 +387,10 @@ def render_details(d: dict) -> str:
                 body.append(r"\subentry{" + head + _tex_inline(b["text"]) + "}{" + _tex_inline(b["right"]) + "}" if b["right"]
                             else head + _tex_inline(b["text"]) + r"\par")
             elif b["type"] == "text":
-                body.append(_tex_inline(b["text"]) + r"\par")
+                body.append(_tex_rich(b["text"], terms) + r"\par")
             else:
-                body += bullets(b["bullets"])
-    body.append(r"\end{document}")
+                body += [r"\begin{bullets}"] + [r"\item " + named(x) for x in b["bullets"]] + [r"\end{bullets}"]
+    body += [r"\sectiondivider", r"\end{document}"]
     return TEX_PREAMBLE.replace("FITLEVEL", str(fit_level(details_lines(d)))) + "\n" + "\n".join(body) + "\n"
 
 
@@ -614,3 +656,157 @@ def apply_edits(tex: str, edits, description: str = "") -> dict:
         out = out.replace(find, rep, 1)
         applied += 1
     return {"tex": out, "applied": applied, "skipped": skipped}
+
+
+# ---------------- My Profile: one standard set of fields per user -> the standard resume ----------------
+PROFILE_LISTS = {"education": ("school", "place", "degree", "dates", "score", "details"),
+                 "experience": ("role", "company", "place", "dates", "bullets"),
+                 "projects": ("name", "tech", "dates", "bullets"),
+                 "skills": ("label", "values")}
+PROFILE_FIELDS = ("name", "tagline", "email", "phone", "linkedin", "github", "location", "summary")
+
+
+def empty_profile() -> dict:
+    return {**{f: "" for f in PROFILE_FIELDS}, **{k: [] for k in PROFILE_LISTS}, "certifications": [], "achievements": [], "extra": []}
+
+
+def clean_profile(p) -> dict:
+    """Validated copy of the user's profile (strings only, bounded sizes)."""
+    if not isinstance(p, dict):
+        raise ValueError("profile must be an object")
+    out = empty_profile()
+    for f in PROFILE_FIELDS:
+        out[f] = _s(p.get(f), 1200 if f == "summary" else 160)
+    for key, fields in PROFILE_LISTS.items():
+        for item in (p.get(key) or [])[:LIMITS["blocks"]]:
+            if not isinstance(item, dict):
+                continue
+            row = {f: ([_s(x) for x in (item.get(f) or [])[:LIMITS["bullets"]] if _s(x)] if f in ("bullets", "details")
+                       else _s(item.get(f), 300 if f == "values" else 160)) for f in fields}
+            if any(row.values()):
+                out[key].append(row)
+    for key in ("certifications", "achievements"):
+        out[key] = [_s(x) for x in (p.get(key) or [])[:LIMITS["bullets"]] if _s(x)]
+    for sec in (p.get("extra") or [])[:4]:
+        if isinstance(sec, dict) and _s(sec.get("title"), 60):
+            out["extra"].append({"title": _s(sec.get("title"), 60), "items": [_s(x) for x in (sec.get("items") or [])[:LIMITS["bullets"]] if _s(x)]})
+    return out
+
+
+def profile_to_details(p: dict) -> dict:
+    """The standard resume (same layout for everyone) from a profile."""
+    entry = lambda title, right="", sub="", sub_right="", bullets=(): {"type": "entry", "title": title, "right": right, "sub": sub,
+                                                                        "sub_right": sub_right, "bullets": list(bullets)}
+    secs = []
+    if p.get("summary"):
+        secs.append({"title": "Summary", "blocks": [{"type": "text", "text": p["summary"]}]})
+    if p.get("education"):
+        secs.append({"title": "Education", "blocks": [entry(e["school"], e["place"], e["degree"], e["dates"],
+                                                            ([f"CGPA / score: {e['score']}"] if e["score"] else []) + e["details"])
+                                                      for e in p["education"]]})
+    if p.get("experience"):
+        secs.append({"title": "Experience", "blocks": [entry(x["role"], " ".join(filter(None, [x["company"], f"({x['place']})" if x["place"] else ""])),
+                                                             "", x["dates"], x["bullets"]) for x in p["experience"]]})
+    if p.get("projects"):
+        secs.append({"title": "Projects", "blocks": [entry(" – ".join(filter(None, [x["name"], x["tech"]])), x["dates"], "", "", x["bullets"])
+                                                     for x in p["projects"]]})
+    if p.get("skills"):
+        secs.append({"title": "Technical Skills", "blocks": [{"type": "line", "label": s["label"], "text": s["values"], "right": ""}
+                                                             for s in p["skills"]]})
+    for key, title in (("certifications", "Certifications"), ("achievements", "Achievements")):
+        if p.get(key):
+            secs.append({"title": title, "blocks": [{"type": "bullets", "bullets": p[key]}]})
+    for sec in p.get("extra") or []:
+        secs.append({"title": sec["title"], "blocks": [{"type": "bullets", "bullets": sec["items"]}] if sec["items"] else []})
+    contacts = [p.get(k, "") for k in ("email", "phone", "linkedin", "github", "location") if p.get(k)]
+    return {"name": p.get("name", ""), "tagline": p.get("tagline", ""), "contacts": contacts, "sections": secs}
+
+
+def details_to_profile(d: dict) -> dict:
+    """Map details read from any uploaded resume onto the standard profile fields (a best guess the user checks)."""
+    p = empty_profile()
+    p["name"], p["tagline"] = d.get("name", ""), d.get("tagline", "")
+    for c in d.get("contacts", []):
+        low = c.lower()
+        key = ("email" if "@" in c else "linkedin" if "linkedin" in low else "github" if "github" in low
+               else "phone" if re.fullmatch(r"[+\d\s()-]{7,}", c) else "location")
+        p[key] = p[key] or c
+    is_date = lambda x: bool(x and _DATES.fullmatch(x.strip()))
+    for sec in d.get("sections", []):
+        t = sec["title"].lower()
+        blocks = sec["blocks"]
+        lines = [b for b in blocks if b["type"] in ("line", "text")]
+        bullet_items = [x for b in blocks if b["type"] == "bullets" for x in b["bullets"]]
+        entries = [b for b in blocks if b["type"] == "entry"]
+        if re.search(r"summary|profile|objective", t):
+            p["summary"] = " ".join(b.get("text", "") for b in lines).strip()
+        elif "education" in t:
+            for e in entries:
+                p["education"].append({"school": e["title"], "place": "" if is_date(e["right"]) else e["right"],
+                                       "degree": "" if is_date(e["sub"]) else e["sub"],
+                                       "dates": next((x for x in (e["sub_right"], e["right"], e["sub"]) if is_date(x)), ""),
+                                       "score": "", "details": e["bullets"]})
+            for b in lines:
+                if p["education"] and re.search(r"cgpa|gpa|percentage|score|marks", b.get("label", "") + b.get("text", ""), re.I) \
+                        and not p["education"][-1]["score"]:
+                    p["education"][-1]["score"] = b["text"]
+                elif p["education"]:
+                    p["education"][-1]["details"].append(((b.get("label") + ": ") if b.get("label") else "") + b["text"])
+        elif re.search(r"experience|internship|employment|work", t):
+            for e in entries:
+                company = "" if is_date(e["right"]) else e["right"]
+                mode = re.search(r"\((on-?site|remote|hybrid|virtual|wfh)\)\s*$", company, re.I)
+                p["experience"].append({"role": e["title"], "company": company[:mode.start()].strip() if mode else company,
+                                        "place": mode.group(1) if mode else "",
+                                        "dates": next((x for x in (e["sub_right"], e["right"], e["sub"]) if is_date(x)), ""),
+                                        "bullets": e["bullets"]})
+        elif "project" in t:
+            for e in entries:
+                parts = re.split(r"\s+[–—|-]\s+", e["title"], maxsplit=1)      # "Mood Mate – Python, OpenCV"
+                name, tech = parts if len(parts) == 2 else (e["title"], "")
+                p["projects"].append({"name": name, "tech": tech, "dates": e["right"] or e["sub_right"], "bullets": e["bullets"]})
+        elif "skill" in t:
+            p["skills"] += [{"label": b.get("label", ""), "values": b.get("text", "")} for b in lines]
+            p["skills"] += [{"label": "", "values": x} for x in bullet_items]
+        elif re.search(r"certif|training|course", t):
+            p["certifications"] += bullet_items + [b.get("text", "") for b in lines] + [e["title"] for e in entries]
+        elif re.search(r"achiev|award", t):
+            p["achievements"] += bullet_items + [b.get("text", "") for b in lines] + [e["title"] for e in entries]
+        else:
+            items = bullet_items + [((b.get("label") + ": ") if b.get("label") else "") + b.get("text", "") for b in lines]
+            items += [" ".join(filter(None, [e["title"], e["right"]])) for e in entries] + [x for e in entries for x in e["bullets"]]
+            p["extra"].append({"title": sec["title"], "items": [i for i in items if i]})
+    return clean_profile(p)
+
+
+def check_profile(p: dict) -> list:
+    """What to ask the user to add or fix in My Profile: [{"where": "experience.0" | field, "message"}]."""
+    out = []
+    if not p.get("name") or len(p["name"].split()) > 5:
+        out.append({"where": "name", "message": "Add your full name."})
+    if not p.get("email"):
+        out.append({"where": "email", "message": "Add your email address."})
+    elif not _EMAIL.match(p["email"]):
+        out.append({"where": "email", "message": "The email address looks incomplete."})
+    if not p.get("phone"):
+        out.append({"where": "phone", "message": "Add your phone number so recruiters can call you."})
+    elif not _PHONE.match(p["phone"]):
+        out.append({"where": "phone", "message": "Check the phone number: 10 digits, optionally with +91."})
+    if not p.get("education"):
+        out.append({"where": "education", "message": "Add your education (college, degree, dates)."})
+    if not p.get("skills"):
+        out.append({"where": "skills", "message": "Add your skills (e.g. Languages: Python, SQL)."})
+    for i, e in enumerate(p.get("education", [])):
+        if not e["degree"] or not e["dates"]:
+            out.append({"where": f"education.{i}", "message": f"“{e['school'][:60]}”: add the degree and dates."})
+    for i, x in enumerate(p.get("experience", [])):
+        if not x["company"]:
+            out.append({"where": f"experience.{i}", "message": f"“{x['role'][:70]}”: add the company. If it's joined to the role, move it."})
+        if not x["dates"]:
+            out.append({"where": f"experience.{i}", "message": f"“{x['role'][:70]}”: add the dates (e.g. Jun 2024 – Aug 2024)."})
+        if not x["bullets"]:
+            out.append({"where": f"experience.{i}", "message": f"“{x['role'][:70]}”: add 1–4 bullets on what you did."})
+    for i, x in enumerate(p.get("projects", [])):
+        if not x["bullets"]:
+            out.append({"where": f"projects.{i}", "message": f"“{x['name'][:60]}”: add a bullet on what you built."})
+    return out

@@ -12,7 +12,7 @@ import user_secrets
 INDEX = "_resumes"
 MAX_VERSIONS = 20
 MAX_CHARS = 25_000          # keeps an encrypted version under the 50k-character Google Sheets cell limit
-SOURCES = {"upload", "pasted", "tailored", "edited"}
+SOURCES = {"upload", "pasted", "tailored", "edited", "profile"}
 
 
 class ResumeError(ValueError):
@@ -97,6 +97,36 @@ def tex_for(st, vid: str) -> str:
         return t
     d = get_details(st, vid)
     return latex_resume.render_details(d) if d else latex_resume.to_latex(t)
+
+
+PROFILE_DOC = "_resume_profile"
+PROFILE_RESUME_NAME = "Resume from my profile"
+
+
+def get_profile(st):
+    """The user's My Profile data (dict) or None."""
+    import json
+    enc = (st.get_json(PROFILE_DOC) or {}).get("data")
+    return json.loads(user_secrets.decrypt_text(enc)) if enc else None
+
+
+def save_profile(st, profile: dict) -> dict:
+    """Store My Profile (encrypted, always) and create/update the standard resume built from it once it has enough
+    content. Returns {"profile", "version" (or None), "note"}."""
+    import json
+    import latex_resume
+    p = latex_resume.clean_profile(profile)
+    doc = st.get_json(PROFILE_DOC) or {}
+    vid = doc.get("version_id", "") if any(v["id"] == doc.get("version_id") for v in _index(st)) else ""
+    st.put_json(PROFILE_DOC, {"data": user_secrets.encrypt_text(json.dumps(p)), "version_id": vid})
+    details = latex_resume.profile_to_details(p)
+    text = latex_resume.details_to_text(details)
+    if len(text) < 100:
+        return {"profile": p, "version": None, "note": "Profile saved. Add a bit more (education, skills…) to create your resume."}
+    if not vid:
+        vid = save(st, PROFILE_RESUME_NAME, text, "profile")["id"]
+        st.put_json(PROFILE_DOC, {"data": user_secrets.encrypt_text(json.dumps(p)), "version_id": vid})
+    return {"profile": p, "version": set_details(st, vid, details), "note": ""}
 
 
 def plain_text(st, vid: str) -> str:

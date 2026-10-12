@@ -147,7 +147,7 @@ Mood Mate – Python, OpenCV
 CERTIFICATIONS AND TRAINING
 - SQL
 """)
-    assert r"{\Large\bfseries SIDDHARTH MORE}" in tex and r"{\itshape Aspiring Python Developer}" in tex
+    assert r"{\Large\bfseries SIDDHARTH MORE}" in tex and r"{\small\itshape Aspiring Python Developer}" in tex
     assert r"sid@example.com} \textbullet{} 9518508756" in tex
     for h in ("Education", "Experience", "Relevant Projects", "Certifications And Training"):
         assert r"\rsec{" + h + "}" in tex
@@ -211,7 +211,8 @@ def test_pdf_text_round_trip_keeps_hyphens_titles_and_wrapped_bullets():
     tex = lx.to_latex(text)
     assert "data-science-focused" in tex                                              # non-breaking hyphens kept
     assert r"\entry{Odoo Python Developer}{Sept 2025 – Present}" in tex                # bracketed dates go right
-    assert r"\item Built a data-science-focused dashboard for weekly reporting using Python, SQL and Power BI with the sales team." in tex
+    assert (r"\item Built a data-science-focused dashboard for weekly reporting using \textbf{Python}, \textbf{SQL} and "
+            r"\textbf{Power BI} with the sales team.") in tex                       # one bullet again, skills in bold
     assert r"{MET Institute of Engineering}{Nashik, Maharashtra}" in tex
 
 
@@ -270,3 +271,47 @@ def test_checked_details_are_stored_encrypted_and_used_for_tailoring(st):
     assert v2["checked"] and "Odoo Python Developer" not in str(st.docs[f"_resume_{v['id']}"])     # encrypted at rest
     assert r"\entry{Odoo Python Developer}{Alligator Infosoft (On-Site)}" in resumes.tex_for(st, v["id"])
     assert "Odoo Python Developer | Alligator Infosoft (On-Site)" in resumes.plain_text(st, v["id"])  # ATS uses the corrected text
+
+
+SAMPLE_PROFILE = {
+    "name": "Siddharth More", "tagline": "Aspiring Python Developer", "email": "sid@example.com", "phone": "9518508756",
+    "linkedin": "linkedin.com/in/sid", "github": "", "location": "", "summary": "",
+    "education": [{"school": "MET Institute of Engineering", "place": "Nashik, Maharashtra", "degree": "B.E. AI & Data Science",
+                   "dates": "Aug 2021 – Jul 2025", "score": "7.60 / 10.00", "details": []}],
+    "experience": [{"role": "Odoo Python Developer", "company": "Alligator Infosoft", "place": "On-Site", "dates": "Sept 2025 – Present",
+                    "bullets": ["Developed custom ERP modules using Python, XML, and PostgreSQL."]}],
+    "projects": [{"name": "Mood Mate", "tech": "Python, OpenCV, Django", "dates": "", "bullets": ["Deployed on Django with MongoDB."]}],
+    "skills": [{"label": "Frameworks", "values": "Django, Frappe, ERPNext"}],
+    "certifications": ["Machine Learning Training – Symbiosis (2024)"], "achievements": [], "extra": []}
+
+
+def test_profile_renders_the_standard_format():
+    p = lx.clean_profile(SAMPLE_PROFILE)
+    tex = lx.render_details(lx.profile_to_details(p))
+    assert r"\entry{MET Institute of Engineering}{Nashik, Maharashtra}" in tex
+    assert r"\subentry{B.E. AI \& Data Science}{Aug 2021 – Jul 2025}" in tex
+    assert r"\entry{Odoo Python Developer}{Alligator Infosoft (On-Site)}" in tex and r"\subentry{}{Sept 2025 – Present}" in tex
+    assert r"\etitle{Mood Mate – Python, OpenCV, Django}" in tex and r"\item Deployed on \textbf{Django} with \textbf{MongoDB}." in tex
+    assert r"\item \textbf{Machine Learning Training} – Symbiosis (2024)" in tex
+    assert r"\sectiondivider" in tex and "colorlinks=true" in tex and r"\IfFileExists{ptmr8t.tfm}" in tex
+    assert lx.check_profile(p) == []
+
+
+def test_import_maps_an_uploaded_resume_onto_the_profile_fields():
+    p = lx.details_to_profile(lx.parse_details(PDF_TEXT))
+    assert (p["name"], p["email"], p["phone"]) == ("Siddharth More", "siddharth29m@gmail.com", "9518508756")
+    assert p["education"][0]["school"] == "MET Institute of Engineering" and p["education"][0]["dates"] == "Aug 2021 – Jul 2025"
+    assert p["skills"] == [{"label": "Languages", "values": "Python, SQL"}]
+    asks = [i["message"] for i in lx.check_profile(p)]
+    assert any("add the company" in m for m in asks)                  # the role had the company glued on in the PDF text
+
+
+def test_my_profile_is_encrypted_and_keeps_one_resume_in_sync(st):
+    out = resumes.save_profile(st, {"name": "Asha"})
+    assert out["version"] is None and "Add a bit more" in out["note"] and resumes.get_profile(st)["name"] == "Asha"
+    first = resumes.save_profile(st, SAMPLE_PROFILE)["version"]
+    assert first["name"] == resumes.PROFILE_RESUME_NAME and first["source"] == "profile"
+    assert "Alligator" not in str(st.docs[resumes.PROFILE_DOC])                                  # encrypted at rest
+    second = resumes.save_profile(st, {**SAMPLE_PROFILE, "tagline": "Odoo Developer"})["version"]
+    assert second["id"] == first["id"] and len(resumes.list_versions(st)) == 1                  # updated, not duplicated
+    assert "Odoo Developer" in resumes.tex_for(st, first["id"])

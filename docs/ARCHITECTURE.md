@@ -109,6 +109,28 @@ New skills are flagged and left unticked by default. You tick the edits you want
 
 It is inserted under an existing bullet using that line's own formatting (`\item`, `\resumeItem{}`, indentation), so the layout is unchanged. New bullets are unticked until the user confirms them. `apply_edits` re-checks every edit on the server before applying it, so the layout never changes.
 
+**My Profile (the standard source for every user's resume).** The dashboard page *My Profile* has fixed fields:
+- personal details and summary;
+- education: school, place, degree, dates, score, details;
+- experience: role, company, place/mode, dates, bullets;
+- projects: name, tech, dates, bullets;
+- skill lines, certifications, achievements and extra sections.
+
+How it works:
+- `clean_profile` validates it, and it is stored encrypted (`_resume_profile`).
+- Saving creates or updates one version, "Resume from my profile" (`resumes.save_profile`), built by `profile_to_details` → `render_details`.
+- *Import from an uploaded resume* maps any saved resume onto these fields (`details_to_profile`) for the user to check.
+- `check_profile` asks for what's missing: email, phone, company, dates, bullets.
+
+**Standard format.** The layout is taken from the owner's own LaTeX template:
+- A4, 11pt, 0.5in/0.45in margins, line spacing 1.05;
+- bold name, small italic tagline, teal links;
+- a rule between sections (`\sectiondivider`) and large bold headings;
+- bold role with the company on the right, and dates below;
+- tech names bold inside bullets (the built-in skill list plus the user's own skills, `own_terms`), and bold certificate names.
+
+Times is used where available (Overleaf), Latin Modern otherwise (in-browser engine). It is plain LaTeX with no titlesec/enumitem.
+
 **Check your details.** After a PDF/DOCX upload or a pasted resume:
 - `parse_details` reads it into structured details: name, tagline, contacts, and sections of entries (title, company/place, second line, dates, bullets), lines and text.
 - `check_details` lists what the user should confirm: missing email/phone/Education/Skills, a company joined to a job title, missing dates.
