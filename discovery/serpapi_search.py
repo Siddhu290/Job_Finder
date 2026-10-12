@@ -5,6 +5,7 @@ import threading
 import requests
 
 import http_client
+from discovery import sources
 from filters import parse_posted
 from models import Job
 
@@ -78,8 +79,9 @@ def google_jobs(serp: SerpApi, query: str, location: str = "India", wfh_only: bo
             # prefer the employer's own job page (where you actually apply) over a portal copy
             listing_url=([u for u in links if u not in board_links] or board_links or [r.get("share_link", "")])[0],
             posted_date=parse_posted(ext.get("posted_at")),
-            source=("Company career page" if on_company_site else "") + (" + " if on_company_site else "")
-                   + (f"Google Jobs ({via})" if via else "Google Jobs"),
+            # A non-job-board apply link is NOT proof of an employer site: it is labelled as unconfirmed and
+            # only verification (official-domain evidence) can make it count as the company's own posting.
+            source=(f"Google Jobs ({via})" if via else "Google Jobs") + (f" + {sources.EMPLOYER_LINK}" if on_company_site else ""),
             remote=wfh_only or bool(ext.get("work_from_home")),
             links=links,
         ))

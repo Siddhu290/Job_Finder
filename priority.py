@@ -39,12 +39,17 @@ def score(row: dict, today: date | None = None, match_overall: int | None = None
     if status == VERIFIED and row.get("Official Apply URL"):
         add(100, "verified apply link on company site")
     source = row.get("Source Platform", "")
-    company_page = "board (" in source or "Company career page" in source
+    # Company-originated only when a provider found it through the employer's own system (official careers page /
+    # employer ATS board). An unconfirmed employer-looking link from Google Jobs earns a small bonus, not this one.
+    company_page = "board (" in source or "via official careers page" in source
     if company_page:
         add(25, "listed on company's own career page")
+    employer_link = not company_page and ("Company career page" in source or "employer-site link" in source)
+    if employer_link:
+        add(10, "links to an employer site (unconfirmed)")
     if row.get("Official Careers URL"):
         add(25, "company careers page found")
-    elif not company_page:
+    elif not company_page and not employer_link:
         add(-10, "only seen on job portals")
     if wfh or filters.is_remote_job(row.get("Location", "")):
         why.append("work from home")

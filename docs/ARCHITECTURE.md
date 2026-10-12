@@ -1,6 +1,8 @@
 # Architecture
 
-Based entirely on the code actually present in this repository at commit `9f4b6b3`. Nothing below is aspirational.
+Updated 2026-10-12 for the source-priority discovery work (uncommitted on top of `4cedc3b`; not deployed). First written at `9f4b6b3`. Nothing below is aspirational. The app is branded **Apply Seamlessly** in the UI (`b059d03`).
+
+**Production today:** Vercel (`job-finder-obs14.vercel.app`) in multi-user mode on Neon Postgres. Migrations 0001-0004 are applied and `rls_status` returns `enforced`. Scheduling is not working: see the Scheduling bullet below.
 
 ## Overview
 
@@ -17,13 +19,58 @@ There is no separate "backend service" to deploy — the dashboard and API are t
 
 `main.py` is the orchestrator, invoked either from the CLI, from `routes/run.py` (dashboard-triggered or cron-triggered), or from the local systemd timer:
 
-1. **Discovery** (`discovery/`) — builds SerpApi queries for fresher/graduate/junior/Data Analyst/Data Engineer roles (`query_builder.py`), runs them (`serpapi_search.py`), and separately polls a curated allowlist of employer ATS boards (`ats_boards.py`, backed by `boards.json`) and does a best-effort HR-contact search (`hr_search.py`). All outbound HTTP goes through `http_client.py` (retry/backoff, per-host politeness, robots.txt checks, secret redaction in logs).
+1. **Discovery** (`discovery/`, orchestrated by `main.plan_tasks` / `main.discover`). Five providers, described in "Discovery sources" below, produce unverified candidates in one bounded thread pool until the discovery share (40%) of `RUN_TIME_LIMIT` is used. A best-effort HR-contact search (`hr_search.py`) runs after verification. All outbound HTTP goes through `http_client.py`: retry and backoff, a per-host politeness throttle (thread-safe), robots.txt checks, a refusal to fetch job-board URLs, and secret redaction in logs.
 2. **Filtering** (`filters.py`) — India/remote-for-India eligibility, fresher/experience bounds, age-of-posting.
 3. **Deduplication** (`storage/deduplication.py`) — merges duplicate postings across sources, preferring the more-verified copy.
-4. **Verification** (`verification/pipeline.py`) — an 8-gate sequential check (employer identity via Google Knowledge Graph/Wikidata → official website → careers page on that same domain → ATS-board link trust → exact vacancy/title/location/requisition-ID match → real open/closed determination → apply-URL ownership → eligibility), producing one of exactly four statuses: `VERIFIED`, `NEEDS_REVIEW`, `REJECTED`, `CLOSED`. Evidence is written to `logs/verification-<date>.jsonl`. Jobs that fail for a transient reason (budget exhausted, network error) go into a retry queue (`storage/store.py`: 5 jobs/run, 3 attempts, 12h apart).
+4. **Verification** (`verification/pipeline.py`) — an 8-gate sequential check (employer identity via Google Knowledge Graph/Wikidata → official website → careers page on that same domain → ATS-board link trust → exact vacancy/title/location/requisition-ID match → real open/closed determination → apply-URL ownership → eligibility), producing one of exactly four statuses: `VERIFIED`, `NEEDS_REVIEW`, `REJECTED`, `CLOSED`. Evidence is stored durably in the Postgres `verification` table (`status`, `reason`, `checks` JSON per gate, `retry`, `attempts`, `next_check`). It is also appended to `logs/verification-<date>.jsonl`, one JSON object per job: `run, dry_run, job_id, status, title, company, location, experience, listing_url, careers_url, apply_url (only if Verified), notes, evidence`. On Vercel that file is in `/tmp` and is lost after each invocation, so the table is the record to review. If a run hits its time limit, jobs not yet verified are saved as Needs Review with retry set (`1edf5d0`). Jobs that fail for a transient reason (budget exhausted, network error) go into a retry queue (`storage/store.py`: 5 jobs/run, 3 attempts, 12h apart).
 5. **Matching** (`matching.py`) against the user's resume profile — a relevance score, kept deliberately separate from verification confidence.
 6. **Persistence** via the storage abstraction (below).
 7. **Budget tracking** (`budget.py`) caps SerpApi calls per run and per month, splitting the quota between job search, employer lookups (cached), and HR lookups.
+
+## Discovery sources (source-priority architecture)
+
+Each source is a provider in `main.provider_tasks`. The order, and which providers run, comes from `DISCOVERY_PROVIDERS` (default `company_pages,ats_boards,google_jobs,linkedin,naukri`). Tasks from all providers are interleaved round-robin in that order, so every source gets early slots. The paid SerpApi budget for a run (half the run's allowance) is also shared round-robin by the paid providers.
+
+| Provider | Module | Cost | Finds | Access method |
+|---|---|---|---|---|
+| `company_pages` | `discovery/company_pages.py` | free (a preferred company not yet identified costs 1 search, max 3 per run) | Vacancies on employers' **official careers pages** and the ATS boards those pages link to | Official site from Knowledge Graph/Wikidata evidence → `careers_search.find_careers` on that domain → employer-linked ATS board APIs, or schema.org `JobPosting` markup on official-domain pages (careers page, ≤3 `rel=next` pages, ≤10 linked vacancy pages) |
+| `ats_boards` | `discovery/ats_boards.py` + `boards.json` | free | Curated employer boards (19 today) | Public Greenhouse / Lever / Ashby APIs; SmartRecruiters and Workday searched by the **user's roles**, ≤3 pages each |
+| `google_jobs` | `discovery/serpapi_search.py` | 1 search per query | Google Jobs listings; apply links on job boards are dropped unless the board is a trusted portal | SerpApi `google_jobs` |
+| `linkedin` | `discovery/platform_search.py` | 1 search per query (`LINKEDIN_QUERIES`, default 2) | LinkedIn job postings indexed by Google | SerpApi Google search `site:linkedin.com/jobs/view …`. **LinkedIn is never fetched**: only Google's result title, link and snippet are read |
+| `naukri` | `discovery/platform_search.py` | 1 search per query (`NAUKRI_QUERIES`, default 2) | Naukri postings indexed by Google | Same, with `site:naukri.com/job-listings`. **Naukri is never fetched** |
+
+**Employers and caching.** The `company_pages` employers are:
+- the user's preferred companies (Settings → prefer);
+- every employer whose official website is already in the company cache. The cache grows as searches resolve new employers.
+
+Employers are crawled least-recently-crawled first, `COMPANY_PAGES_PER_RUN` (default 8) per run. A partly finished run therefore continues next time. Each official domain's careers page and linked boards are cached as `careers|<domain>` in the shared `company_cache` table (public company data only: `careers_url, boards, evidence, checked`) for `CAREERS_TTL_DAYS` (default 7).
+
+**Source labels and tiers** (`discovery/sources.py`):
+
+| Tier | Meaning | Labels |
+|---|---|---|
+| 1 | company-originated | Company website, Greenhouse, Lever, Ashby, Workday, SmartRecruiters, Jobvite |
+| 2 | trusted job platform | LinkedIn, Naukri, Indeed, Glassdoor, Foundit, Shine, … |
+| 3 | supplementary | anything else |
+
+`SOURCE_TIERS` (JSON) overrides any label's tier. Tiers express **preference only**. They decide:
+- which copy becomes the canonical listing when duplicates merge;
+- verification order when time is short;
+- a ranking bonus.
+
+They never make a job Verified.
+
+**Provenance.** Every URL a job was seen at is stored in the verification record as `checks.sources = [{label, url, tier, id}]`. `url` is canonical: tracking parameters such as `utm_*`, `trk` and `refId` are dropped, while vacancy parameters such as `gh_jid` and `token` are kept. `id` is source-specific, e.g. `linkedin:3912345678`, `naukri:…` or `greenhouse:board:4001`.
+
+**Deduplication** (`storage/deduplication.py`):
+- Duplicates are matched on employer + title + location.
+- Two postings with **different employer requisition IDs are never merged**.
+- The better-verified copy keeps its status and evidence.
+- The best-tier URL becomes the canonical listing; all other URLs are kept as provenance.
+
+**Official labelling.** The dashboard (`routes/jobs.py:source_info`) shows **"Official company posting"** only when verification evidence supports it: the job is Verified, or the exact vacancy was matched in the employer's own system (`vacancy_match` passed). A "Company website" label on a domain not shown to be the employer's is displayed as "Other site (unconfirmed)". The Google Jobs label for an off-board apply link is now "employer-site link (unconfirmed)". It used to say "Company career page", and the ranking had treated that as company-originated.
+
+**Run status.** A run that hit the discovery time share is recorded as `partial (search time limit)`, and one that hit the overall limit as `stopped early (time limit)`. Neither is recorded as `ok`. Per-provider counts are in the run summary: tasks done, candidates, errors, and unsupported boards.
 
 ## Storage: two interchangeable backends
 
@@ -45,7 +92,7 @@ There is no separate "backend service" to deploy — the dashboard and API are t
 
 - **Config** (`config.py`) validates all required env vars at startup and fails closed with a clear error, never logging values.
 - **Secret handling** — redaction filter on all log output (`http_client.py`); per-user secrets Fernet-encrypted at rest; `/api/health` reports config *presence* (booleans) only.
-- **Scheduling** — exactly one of two paths is meant to be active at a time: a local **systemd timer** (`scheduler/setup_schedule.sh`) running `main.py` directly, or **Vercel Cron** (`vercel.json`) hitting `/api/run` with a `CRON_SECRET` bearer token. Both are implemented; neither is currently active in this environment.
+- **Scheduling.** Exactly one of two paths is meant to be active: a local **systemd timer** (`scheduler/setup_schedule.sh`) running `main.py`, or **Vercel Cron** (`vercel.json`) calling `/api/run` with a `CRON_SECRET` bearer token. In multi-user mode the cron handler now calls `routes/run.py:cron_all_users()`. It goes through users least-recently-searched first (`backend.active_users`). Each user gets a time slice (`CRON_USER_SECONDS`, default 110 s) inside `CRON_TIME_BUDGET` (270 s), and runs with their own saved settings, key, store and lock. Users who don't fit are deferred to the next slot. This is implemented and tested but **not deployed**: production still runs the old code, and `CRON_SECRET` on Vercel is unconfirmed.
 
 ## Architecture diagram
 
@@ -161,5 +208,5 @@ flowchart TB
 - No separate database for job data in single-user mode — Google Sheets *is* the database.
 - No message queue, no background worker process — runs happen synchronously within a single `main.py` invocation, bounded by the Vercel 240s self-imposed budget (300s platform limit).
 - No notification provider (email/SMS/push) is wired up anywhere in the code — "Follow-ups" surfaces reminders in the dashboard only, it does not push anything to the user.
-- No LinkedIn scraping or access-control bypass anywhere — `hr_search.py` only parses Google's own result snippets.
+- No LinkedIn or Naukri scraping or access-control bypass anywhere. `hr_search.py` and `platform_search.py` only read Google's own result titles and snippets, and `http_client` refuses to fetch job-board URLs.
 - No client-side framework/build step for the frontend — plain HTML/CSS/JS.

@@ -124,7 +124,7 @@ def test_google_jobs_normalisation(monkeypatch):
     monkeypatch.setattr(s, "search", lambda **p: data)
     [job] = serpapi_search.google_jobs(s, "q")
     assert job.listing_url == "https://boards.greenhouse.io/acme/jobs/1"  # company page preferred over portal
-    assert job.source == "Company career page + Google Jobs (LinkedIn)" and len(job.links) == 2 and job.posted_date is not None
+    assert job.source == "Google Jobs (LinkedIn) + employer-site link (unconfirmed)" and len(job.links) == 2 and job.posted_date is not None
 
 
 # ---------- secrets never logged ----------

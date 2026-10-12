@@ -28,10 +28,24 @@ def job_id(job) -> str:
     return "J" + hashlib.sha1(job_key(job).encode()).hexdigest()[:10].upper()
 
 
+def _tier(job) -> int:
+    from discovery.sources import tier
+    return tier(job.listing_url) if job.listing_url else 9
+
+
 def _merge(keep, other):
-    for u in other.links:
-        if u not in keep.links:
+    """Fold `other` into `keep`. Weaker evidence never replaces stronger: keep's status/checks stay, and the
+    canonical listing URL becomes the best-tier one (employer site/ATS over LinkedIn/Naukri over the rest)."""
+    from discovery.sources import canonical_url
+    have = {canonical_url(u) for u in keep.links}
+    for u in other.links + [other.listing_url]:
+        if u and canonical_url(u) not in have:
             keep.links.append(u)
+            have.add(canonical_url(u))
+    if other.listing_url and _tier(other) < _tier(keep):
+        if keep.listing_url and canonical_url(keep.listing_url) not in have:
+            keep.links.append(keep.listing_url)
+        keep.listing_url = other.listing_url
     if other.source and other.source not in keep.source:
         keep.source = f"{keep.source}; {other.source}" if keep.source else other.source
     keep.description = keep.description if len(keep.description) >= len(other.description) else other.description
@@ -39,15 +53,25 @@ def _merge(keep, other):
     keep.posted_date = keep.posted_date or other.posted_date
 
 
+def _better(a, b) -> bool:
+    """Is a the stronger copy? Verification status first, then source tier."""
+    return (_RANK.get(a.status, 0), -_tier(a)) > (_RANK.get(b.status, 0), -_tier(b))
+
+
 def dedupe(jobs, key=lambda j: loose_key(j.company, j.title, j.location)):
-    """(unique_jobs, duplicates_merged). The better-verified copy wins; links/sources are merged."""
-    seen = {}
+    """(unique_jobs, duplicates_merged). The better-verified (then better-sourced) copy wins; links/sources merge.
+    Two postings with different employer requisition IDs are different vacancies, even with the same title."""
+    seen, out = {}, []
     for j in jobs:
-        k = key(j)
-        if k not in seen:
-            seen[k] = j
+        group = seen.setdefault(key(j), [])
+        same = next((g for g in group if not (g.req_id and j.req_id and norm_id(g.req_id) != norm_id(j.req_id))), None)
+        if same is None:
+            group.append(j)
+            out.append(j)
             continue
-        keep, other = (j, seen[k]) if _RANK.get(j.status, 0) > _RANK.get(seen[k].status, 0) else (seen[k], j)
+        keep, other = (j, same) if _better(j, same) else (same, j)
         _merge(keep, other)
-        seen[k] = keep
-    return list(seen.values()), len(jobs) - len(seen)
+        if keep is j:                                   # replace by identity (dataclass == compares values)
+            for lst in (group, out):
+                lst[next(i for i, x in enumerate(lst) if x is same)] = j
+    return out, len(jobs) - len(out)

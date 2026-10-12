@@ -25,7 +25,7 @@ import priority
 import user_secrets
 from config import ConfigError, credentials_file_is_private, load_config
 import config
-from discovery import ats_boards, hr_search, query_builder
+from discovery import ats_boards, company_pages, hr_search, platform_search, query_builder, sources
 from discovery.serpapi_search import BudgetExhausted, SerpApi, SerpApiAuthError, SerpApiError, google_jobs
 from integrations.google_sheets import C, HEADERS, SheetsClient, SheetsError, job_row, needs_headers, plan_sync
 from models import BUDGET_NOTE, CLOSED, NEEDS_REVIEW, PENDING_NOTE, REJECTED, VERIFIED
@@ -92,41 +92,110 @@ def acquire_lock(cache_dir):
     return fh
 
 
-def discover(serp, stats, budget):
-    raw = []
-    for entry in ats_boards.load_boards(config.PROJECT_DIR / "boards.json"):
-        if STOP:
-            break
-        raw += ats_boards.board_jobs(entry, stats)
+PROVIDERS = ("company_pages", "ats_boards", "google_jobs", "linkedin", "naukri")   # default priority order
+PAID = {"google_jobs", "linkedin", "naukri"}        # each task costs one SerpApi search
+
+
+def enabled_providers() -> list:
+    """DISCOVERY_PROVIDERS (comma-separated, in priority order) or the default. Unknown names are ignored."""
+    names = [n.strip() for n in (os.getenv("DISCOVERY_PROVIDERS") or ",".join(PROVIDERS)).split(",")]
+    return [n for n in dict.fromkeys(names) if n in PROVIDERS]
+
+
+def provider_tasks(name, serp, stats, cache, p, budget) -> list:
+    """[(label, fn, args)] for one provider. Building the list costs nothing; running a paid task costs one search."""
+    roles = list(p.roles) or list(ats_boards.DEFAULT_TERMS[:2])   # user's roles; data roles only without a resume
+    if name == "company_pages":
+        if cache is None:
+            return []
+        sites = company_pages.seeds(cache, getattr(p, "prefer", []), serp, stats)[:company_pages.per_run()]
+        return [(f"company {s.domain}", company_pages.company_jobs, (s, cache, stats, roles)) for s in sites]
+    if name == "ats_boards":
+        return [(f"board {e['company']}", ats_boards.board_jobs, (e, stats))
+                for e in ats_boards.load_boards(config.PROJECT_DIR / "boards.json")]
+    if name == "google_jobs":
+        return [(f"query {q!r}", google_jobs, (serp, q, where, wfh)) for q, where, wfh in query_builder.build(p.locations, p.mode, p.roles)]
+    limit = int(os.getenv(f"{name.upper()}_QUERIES", "2") or 2)
+    return [(f"{name} {q!r}", platform_search.search, (serp, plat, q, wfh, getattr(p, "max_age_days", None)))
+            for plat, q, wfh in platform_search.queries(name, roles, p.locations, p.mode, limit)]
+
+
+def interleave(lanes) -> list:
+    """Round-robin across providers in priority order, so every enabled source gets early slots."""
+    out = []
+    for i in range(max((len(l) for l in lanes), default=0)):
+        out += [lane[i] for lane in lanes if i < len(lane)]
+    return out
+
+
+def plan_tasks(serp, stats, budget, cache=None) -> list:
+    """[(provider, label, fn, args)] in priority order. budget caps the paid (SerpApi) tasks, shared round-robin;
+    free tasks (company pages, ATS board APIs) don't use it. Nothing is searched here."""
     p = filters.PROFILE
+    lanes = []
+    for name in enabled_providers():
+        try:
+            tasks = provider_tasks(name, serp, stats, cache, p, budget)
+        except SerpApiAuthError:
+            raise
+        except (SerpApiError, ValueError, OSError) as e:      # one provider's set-up problem must not stop the others
+            stats["errors"].append(f"{name}: {e}")
+            continue
+        lanes.append([(name, *t) for t in tasks])
+    tasks, paid = [], 0
+    for t in interleave(lanes):        # the paid budget is shared round-robin by the paid providers
+        if t[0] in PAID:
+            if paid >= budget:
+                continue
+            paid += 1
+        tasks.append(t)
+    return tasks
+
+
+def discover(serp, stats, budget, cache=None):
+    """Candidates from every enabled provider, in one bounded pool, until the discovery time share is used."""
+    tasks = plan_tasks(serp, stats, budget, cache)
+    prov = stats.setdefault("providers", {})
+    for name, *_ in tasks:
+        prov.setdefault(name, {"tasks": 0, "done": 0, "jobs": 0, "errors": 0})["tasks"] += 1
+    if STOP or not tasks:
+        return []
     limit = float(os.getenv("RUN_TIME_LIMIT", "0") or 0)
-    queries = query_builder.build(p.locations, p.mode, p.roles)[:budget]   # deduplicated, best first
-    if STOP or not queries:
-        return raw
-    # Google Jobs via SerpApi takes 10-20 s per query, so they run in parallel (one at a time used up the
-    # time cap after ~5 queries). ponytail: fixed 5 workers; raise if SerpApi plan allows more concurrency.
-    pool = ThreadPoolExecutor(max_workers=5)
-    futs = {pool.submit(google_jobs, serp, q, where, wfh): i for i, (q, where, wfh) in enumerate(queries)}
+    workers = max(1, min(int(os.getenv("DISCOVERY_CONCURRENCY", "5") or 5), 10))
+    # SerpApi takes 10-20 s per query and careers pages a few seconds each, so tasks run in parallel (bounded).
+    pool = ThreadPoolExecutor(max_workers=workers)
+    futs = {pool.submit(fn, *args): i for i, (_, _, fn, args) in enumerate(tasks)}
     results = {}
     timeout = max(limit * DISCOVERY_SHARE - (time.monotonic() - RUN_STARTED), 1) if limit else None
     try:
         for f in as_completed(futs, timeout=timeout):
-            q = queries[futs[f]][0]
+            name, what = tasks[futs[f]][:2]
             try:
                 results[futs[f]] = f.result()
-                log.info("query %r -> %d results", q, len(results[futs[f]]))
+                prov[name]["done"] += 1
+                prov[name]["jobs"] += len(results[futs[f]])
+                log.info("%s -> %d results", what, len(results[futs[f]]))
             except SerpApiAuthError:
                 raise
             except SerpApiError as e:
+                prov[name]["done"] += 1
                 if not isinstance(e, BudgetExhausted):
-                    stats["errors"].append(str(e))
-                    log.warning("%s", e)
+                    prov[name]["errors"] += 1
+                    stats["errors"].append(f"{name}: {e}")
+                    log.warning("%s: %s", what, e)
+            except Exception as e:  # noqa: BLE001 - a bug or outage in one provider must not lose the others' results
+                prov[name]["done"] += 1
+                prov[name]["errors"] += 1
+                stats["errors"].append(http_client.redact(f"{name}: {type(e).__name__}: {e}"))
+                log.exception("%s failed", what)
     except FuturesTimeout:
-        log.warning("discovery time budget used; verifying what was found so far (%d of %d searches done)",
-                    len(results), len(queries))
+        stats["discovery_truncated"] = True
+        log.warning("discovery time budget used; verifying what was found so far (%d of %d tasks done)",
+                    len(results), len(tasks))
     finally:
         pool.shutdown(wait=False, cancel_futures=True)
-    for i in sorted(results):          # keep best-first query order for dedupe
+    raw = []
+    for i in sorted(results):          # priority order, so dedupe keeps the better-sourced copy first
         raw += results[i]
     return raw
 
@@ -150,7 +219,6 @@ def run(args):
     stats = {"discovered": 0, "unique": 0, "rejected_filters": 0, "careers_pages": 0, VERIFIED: 0, NEEDS_REVIEW: 0,
              CLOSED: 0, REJECTED: 0, "new_rows": 0, "updated_cells": 0, "duplicates_skipped": 0, "errors": []}
 
-    queries = query_builder.build(profile.locations, profile.mode, profile.roles)
     sheets = st = None
     if not (args.dry_run or args.plan):  # fail fast on storage problems before spending SerpApi credits
         sheets, st = backend.open_for_run(cfg, args.user_id)
@@ -165,7 +233,7 @@ def run(args):
     b = budget.plan(cfg.serpapi_max_calls, budget.monthly_limit(), acct, est_used)
     stats["budget"] = b.as_dict()
     if args.plan:
-        print_plan(queries, b, cfg)
+        print_plan(b, cfg)
         return 0
     if b.allowed <= 0:
         log.warning("no SerpApi budget for this run: %s", b.reason)
@@ -193,7 +261,7 @@ def run(args):
     cache_in_sheet = sheets is not None and (os.getenv("CACHE_IN_SHEET") == "1" or backend.is_pg())
     if cache_in_sheet:
         cache.data.update(sheets.read_cache())
-    raw = discover(serp, stats, budget=max(1, cfg.serpapi_max_calls // 2))
+    raw = discover(serp, stats, budget=max(1, cfg.serpapi_max_calls // 2), cache=cache)
     stats["discovered"] = len(raw)
     if st:
         queued = st.retry_queue(now_s)
@@ -205,6 +273,7 @@ def run(args):
 
     # spend the limited employer-lookup budget on the most promising candidates first
     candidates.sort(key=lambda j: (filters.experience_check(j.description)[0] != filters.ELIGIBLE,
+                                   sources.tier(j.listing_url) if j.listing_url else 3,   # company-originated first
                                    all(http_client.is_job_board(u) for u in j.links)))
     hr_reserve = cfg.serpapi_max_calls // 5  # keep some searches for finding HR contacts
     serp.max_calls = cfg.serpapi_max_calls - hr_reserve
@@ -220,6 +289,8 @@ def run(args):
         if ok:
             verdict, summary = filters.experience_check(job.description)
             ok, why = verdict != filters.TOO_SENIOR, (filters.contradiction(job.title, verdict, summary) or f"experience: {summary}")
+            if verdict != filters.UNKNOWN and not job.experience:
+                job.experience = summary       # as stated in the listing; verification replaces it with the employer's own
         if not ok:
             stats["rejected_filters"] += 1
             log.info("filtered out: %s @ %s (%s)", job.title, job.company, why)
@@ -282,7 +353,7 @@ def run(args):
         st.upsert("Runs", [{"Run ID": run_id, "Finished": datetime.now(tz).strftime("%Y-%m-%d %H:%M"), "SerpApi Calls": serp.calls,
                             "Discovered": stats["discovered"], "Unique": stats["unique"], "New Rows": stats["new_rows"],
                             "Verified": stats.get(VERIFIED, 0), "Needs Review": stats.get(NEEDS_REVIEW, 0),
-                            "Errors": len(stats["errors"]), "Status": "stopped early (time limit)" if STOP else "ok"}], key="Run ID")
+                            "Errors": len(stats["errors"]), "Status": run_status(stats)}], key="Run ID")
         if hasattr(st, "add_usage"):
             st.add_usage(now, serp.calls)   # shared monthly SerpApi counter (multi-user mode)
         st.release_lock(run_id)
@@ -327,7 +398,8 @@ def verification_record(j, run_id, now_s):
     nxt = now_s if pending else (datetime.strptime(now_s, "%Y-%m-%d %H:%M") + timedelta(hours=12 * attempts)).strftime("%Y-%m-%d %H:%M") if retry else ""
     is_open = j.checks.get("open_status", {}).get("status") == "pass"
     return {"Timestamp": now_s, "Job ID": job_id(j), "Run ID": run_id, "Status": j.status, "Req ID": j.req_id,
-            "Reason": j.notes[0] if j.notes else "", "Checks": j.checks, "Last Open Check": now_s if is_open else "",
+            "Reason": j.notes[0] if j.notes else "", "Checks": {**j.checks, "sources": sources.provenance(j)},
+            "Last Open Check": now_s if is_open else "",
             "Retry": "yes" if retry else "", "Attempts": attempts, "Next Check": nxt}
 
 
@@ -418,19 +490,35 @@ def saved_settings_args(user_ref=None) -> list:
         return []
 
 
-def print_plan(queries, b, cfg):
+def print_plan(b, cfg):
     disc = max(1, b.allowed // 2)
+    tasks = plan_tasks(None, {"errors": []}, disc)        # same plan the search will use (company pages: from cache)
+    shown = lambda name, args: args[1] if name == "google_jobs" else f"[{name.title()} via Google] {args[2]}"
+    queries = [(shown(name, args), "", False) for name, _, _, args in tasks if name in PAID]
+    total_paid = sum(1 for name, *_ in plan_tasks(None, {"errors": []}, 10 ** 6) if name in PAID)
     print("==== Search plan (no searches spent) ====")
     print(f"  Searches allowed this run: {b.allowed}  ({b.reason})")
     print(f"  SerpApi account: {b.confirmed_left if b.confirmed_left is not None else 'unknown'} searches left (confirmed), "
           f"{b.confirmed_used if b.confirmed_used is not None else 'unknown'} used this month (confirmed); "
           f"{b.estimated_used if b.estimated_used is not None else 'n/a'} used per our run records (estimated)")
-    print(f"  Up to {min(disc, len(queries))} job searches, then up to {b.allowed - min(disc, len(queries)) - b.allowed // 5} employer look-ups "
+    free = [label for name, label, *_ in tasks if name not in PAID]
+    print(f"  Free sources (no searches spent): {len(free)} employer ATS boards, plus up to {company_pages.per_run()} "
+          f"official careers pages of employers already identified")
+    print(f"  Up to {min(disc, len(queries))} job searches (Google Jobs, LinkedIn and Naukri via Google), then up to {b.allowed - min(disc, len(queries)) - b.allowed // 5} employer look-ups "
           f"(cached ones are free) and up to {b.allowed // 5} HR look-ups")
     for i, (q, where, wfh) in enumerate(queries[:disc], 1):
-        print(f"   {i:2}. {q}" + ("  [work from home filter]" if wfh else ""))
-    if len(queries) > disc:
-        print(f"   … {len(queries) - disc} more queries not run this time (budget)")
+        print(f"   {i:2}. {q}")
+    if total_paid > len(queries):
+        print(f"   … {total_paid - len(queries)} more queries not run this time (budget)")
+
+
+def run_status(stats) -> str:
+    """A run that skipped work is never reported as a plain success."""
+    if STOP:
+        return "stopped early (time limit)"
+    if stats.get("discovery_truncated"):
+        return "partial (search time limit)"
+    return "ok"
 
 
 def print_summary(s, dry_run):
@@ -447,6 +535,10 @@ def print_summary(s, dry_run):
             ("API/verification errors", len(s["errors"]))]
     for k, v in rows:
         print(f"  {k:<52}{v}")
+    for name, p in (s.get("providers") or {}).items():
+        print(f"  Source {name:<45}{p['done']}/{p['tasks']} done, {p['jobs']} candidates, {p['errors']} errors")
+    for u in (s.get("unsupported") or [])[:10]:
+        print(f"    - unsupported (no public API): {u}")
     for e in s["errors"][:20]:
         print(f"    ! {http_client.redact(e)}")
 

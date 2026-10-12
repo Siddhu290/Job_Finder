@@ -116,6 +116,11 @@ def test_hr_profiles_from_google_results():
 
 def test_company_career_page_listing_outranks_portal_only():
     base = dict(Verification_Status="Needs Review", Location="Pune", Experience_Requirement="Not stated")
-    company = score(r(Source_Platform="Company career page + Google Jobs (Naukri)", **base), TODAY)
+    official = score(r(Source_Platform="Company website via official careers page (acme.com)", **base), TODAY)
+    link = score(r(Source_Platform="Google Jobs (Naukri) + employer-site link (unconfirmed)", **base), TODAY)
+    legacy = score(r(Source_Platform="Company career page + Google Jobs (Naukri)", **base), TODAY)
     portal = score(r(Source_Platform="Google Jobs (Naukri)", **base), TODAY)
-    assert company[0] > portal[0] and "listed on company's own career page" in company[2]
+    assert official[0] > link[0] > portal[0] and "listed on company's own career page" in official[2]
+    # an unconfirmed employer-looking link (old or new label) never earns the company-page bonus
+    assert legacy[0] == link[0] and "listed on company's own career page" not in link[2] + legacy[2]
+    assert "only seen on job portals" not in link[2]

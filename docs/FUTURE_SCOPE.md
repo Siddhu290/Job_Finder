@@ -1,152 +1,93 @@
-# Future Scope & Roadmap
+# Future Scope and Roadmap
 
-Important correction to the original task framing: several "future" phases below (4, 7, 10, and parts of 2/3/8) are **already substantially implemented**, verified by code read + passing tests. This roadmap reflects actual ground truth, not the assumption that these are greenfield. Treat each phase as "close the gap," not "build from scratch," unless stated otherwise.
+**Audit date:** 2026-10-12 · **Commit:** `4cedc3b`, plus uncommitted source-priority work
 
-Priority key: **P0** security/data-integrity/major-failure · **P1** essential for dependable daily use · **P2** major usability/job-search improvement · **P3** optional/advanced, can wait.
+**Done in code on 2026-10-12, not deployed:**
+- P0-1 and P0-2 (cron);
+- source-priority discovery: company career pages, LinkedIn and Naukri via Google, provenance, cross-source dedupe;
+- honest Google Jobs label;
+- partial-run status;
+- dashboard source labels and filters.
 
----
+What's left is listed below.
 
-## Phase 1 — Reliability and Production Readiness
+## Already built (don't rebuild)
 
-| Item | Current status | Priority | Dependencies | Complexity | Acceptance criteria |
-|---|---|---|---|---|---|
-| Fix `_resume_args()` signature bug (`routes/run.py`) | Open bug, reproduced | **P0** | None | Small | "Search using my resume" returns a valid job list, not a 500; new test calls the real function |
-| API retries/timeouts/error handling | Already implemented (`http_client.py` retry/backoff, robots.txt, politeness) | — | — | — | No action needed |
-| Idempotent runs / locking / dedup | Already implemented (run-lock, 30-min duplicate-skip, dedup module) | — | — | — | No action needed |
-| SerpApi budget tracking/limits | Already implemented (`budget.py`) | — | — | — | No action needed |
-| Structured logs / diagnostics | Already implemented (JSONL verification evidence, redacted logs) | P2 | — | Small | Confirm `write_audit`'s schema is documented (Needs Investigation today) |
-| Config validation before running | Already implemented (`config.py` fails closed) | — | — | — | No action needed |
-| Strengthen auth/session/file-upload | Already strong (scrypt, lockout, HMAC sessions, signature-checked uploads) | P2 | — | Small | Add IP-based login throttling if abuse is observed (currently per-account only, by design) |
-| Rotate previously exposed credentials | README already states this policy explicitly | **P0** (standing policy) | None | Small | Rotate SerpApi key, Google service-account key, and dashboard password whenever any credential is pasted into a chat, ticket, or screen share |
-| Test one scheduler before enabling recurring jobs | Neither scheduler currently active | **P1** | Fix P0 bug first | Small | One scheduler (systemd *or* Vercel cron, not both) runs once successfully end-to-end, confirmed via logs |
-| Confirm persistence/recovery | Interrupted-run marking + 10-min lock lease already implemented and tested | — | — | — | No action needed |
-| `.env.example` hygiene (real Sheet ID committed) | Open minor issue | P2 | None | Small | Replace with a placeholder like every other field in the file |
+- Multi-user Postgres with RLS
+- Sign-up and sign-in
+- Per-user encrypted keys and admin key sharing
+- SerpApi discovery (parallel) plus ATS boards
+- A multi-gate verification pipeline with stored evidence
+- Retry queue
+- Resume upload with Groq profile extraction and model fallback
+- Match scores, ATS score and anti-fabrication tailoring
+- Named resume collection
+- Application lifecycle with undo
+- Follow-ups and analytics
+- Per-user Sheet tabs
+- Vercel deployment with health check
 
-## Phase 2 — Better Job Matching
-
-| Item | Current status | Priority | Dependencies | Complexity | Acceptance criteria |
-|---|---|---|---|---|---|
-| Separate relevance from verification confidence | Already implemented (`matching.py` vs `verification/`, explicitly documented) | — | — | — | No action needed |
-| Configurable role/location/mode/experience filters | Already implemented (`main.py --roles/--locations/--mode/--max-age-days/--employment`) | — | — | — | No action needed |
-| Required vs preferred skills comparison | Already implemented (`matching.py` weighted scoring) | — | — | — | No action needed |
-| Detect experience-requirement overreach | Already implemented (ineligibility cap at 25) | — | — | — | No action needed |
-| Match explanations | Already implemented (`matching.py:132-147`) | — | — | — | No action needed |
-| Transparent, configurable score-component weights | Partially implemented — weights exist and are shown, but are **hardcoded constants**, not user-configurable | P3 | None | Medium | User can adjust weight sliders in Settings; score recomputes live |
-| Exclusions (senior roles, unwanted internships, ineligible locations) | Partially implemented — `--exclude` keyword flag exists; no structured "exclude internships" toggle | P2 | None | Small | A checkbox/flag excludes internship postings and user-specified locations without a keyword workaround |
-| Expand the fixed skill dictionary beyond data/analytics roles | Not implemented | P3 | None | Medium | Matching works credibly for at least 2-3 additional role families (e.g., software/QA) without a code change per role |
-
-## Phase 3 — Stronger Job Verification
-
-| Item | Current status | Priority | Dependencies | Complexity | Acceptance criteria |
-|---|---|---|---|---|---|
-| Official-domain/ATS-ownership checks | Already implemented and tested | — | — | — | No action needed |
-| Evidence preservation per decision | Implemented (JSONL log); schema not yet documented | P2 | None | Small | `write_audit`'s format documented; spot-checked against a real log entry |
-| Job-expiry detection / periodic rechecks | Partially implemented — `application_status.py` detects closed at verify-time; no scheduled recheck of previously-verified jobs | P2 | Scheduler active (Phase 1) | Medium | A verified job that later closes is detected within one scheduled cycle and flagged |
-| Mismatched title/location/requisition-ID detection | Already implemented (`vacancy_matcher.py`) | — | — | — | No action needed |
-| Specific reasons for "Needs Review" | Already implemented (pipeline returns per-gate failure reason) | — | — | — | No action needed |
-| Manual review queue for uncertain jobs | Not implemented as a distinct UI — Needs Review jobs appear in the normal job list, not a dedicated queue | P2 | None | Small | A filterable "Needs Review" view with one-click re-verify |
-| Suspicious-posting detection | Not implemented | P3 | None | Medium | At least one heuristic (e.g., no company resolvable + urgency language) flags a posting as suspicious with a stated reason |
-| Jobvite support | Not implemented (no public API) | P3 | None | Large / low value | Document as a permanent known gap unless Jobvite publishes a usable API |
-| SmartRecruiters real coverage | Client exists, zero boards configured | P3 | None | Small | At least one real SmartRecruiters board added to `boards.json` and verified end-to-end |
-
-## Phase 4 — Application Tracking
-
-**Already substantially implemented** — `applications.py`'s `STAGES` list (`Discovered, Saved, Ready to Apply, Applied, Online Assessment, Recruiter Screening, Technical Interview, HR Interview, Offer, Rejected, Withdrawn, Not Interested`) is a superset of the task's proposed lifecycle, with notes, recruiter, offer details, resume-version link, deadlines, and assessment/interview dates already as real fields, plus `undo`/`history`/archive.
-
-| Item | Current status | Priority | Dependencies | Complexity | Acceptance criteria |
-|---|---|---|---|---|---|
-| Core lifecycle + history/undo | Already implemented and exercised via `tests/test_lifecycle.py` | — | — | — | No action needed |
-| Direct unit test coverage (`test_applications.py`) | Likely only indirectly covered | P1 | None | Small | A dedicated test exercises `clean_fields`, `apply_change`, `undo`, `history` directly, not through another module |
-| Filters for pending applications / upcoming deadlines | `followups.py` already computes this; confirm it's surfaced as a dashboard filter, not just a backend computation | P2 | None | Small | Dashboard has a one-click "pending" / "due soon" filter backed by `followups.py` |
-| "Application was submitted" honesty guarantee | Already correct by design — nothing auto-marks "Applied"; the user records it | — | — | — | No action needed |
-
-## Phase 5 — Resume Lab
-
-**Already substantially implemented**, with verified anti-fabrication guarantees.
-
-| Item | Current status | Priority | Dependencies | Complexity | Acceptance criteria |
-|---|---|---|---|---|---|
-| Resume-to-job comparison, missing-keyword suggestions | Already implemented (`ats.py`, `matching.py`) | — | — | — | No action needed |
-| Role-specific resume summaries | Not confirmed as a distinct feature (tailoring covers per-job suggestions; a standalone "summary" generator wasn't found) | P3 | Groq live-tested first | Small | A one-paragraph role-targeted summary can be generated and is truthfulness-checked like other tailoring output |
-| Draft bullet-point improvements grounded in real experience | Already implemented with enforced guards (`tailor.py`) | — | — | — | No action needed |
-| Editable tailoring suggestions | Already implemented | — | — | — | No action needed |
-| Resume version management (≤20, encrypted) | Already implemented | — | — | — | No action needed |
-| DOCX export | Already implemented (README + `resumes.py`) | — | — | — | No action needed |
-| PDF export | Implemented via browser print, not a server-generated PDF | P3 | None | Small | Acceptable as-is; only revisit if print-to-PDF proves unreliable for users |
-| **Live Groq validation** | **Never done** — this blocks trusting every item above in production | **P0** (gating item for the whole phase) | A disposable Groq key | Small | One real resume, uploaded through the real UI, with a real Groq key, produces a sane profile/tailoring result end-to-end |
-
-## Phase 6 — Follow-ups and Notifications
-
-| Item | Current status | Priority | Dependencies | Complexity | Acceptance criteria |
-|---|---|---|---|---|---|
-| Daily job-digest / reminder computation | Already implemented (`followups.py`: overdue/today/upcoming for follow-up, assessment, interview, deadline, closing-soon) | — | — | — | No action needed |
-| Actually **notifying** the user (email/push) | **Not implemented at all** — no notification provider is wired up anywhere; reminders only appear when the dashboard is opened | P2 | Choice of provider (e.g., Resend/SendGrid for email) + explicit user opt-in | Medium | Before building: document provider, cost per email, and privacy implications (what job/application data would leave the server) for user sign-off |
-| User-controlled frequency / opt-out | Not applicable yet (no notifications exist to configure) | P2 | Notification provider chosen | Small | A Settings toggle controls frequency and allows full opt-out, defaulting to opt-out |
-
-**Explicitly flagged for the user before any implementation work, per task instructions:** this phase requires picking a notification provider, which has real cost and privacy implications (job search and application data would need to leave the server to reach an email/SMS/push provider). Recommend this be a separate decision, not bundled into a reliability pass.
-
-## Phase 7 — Analytics
-
-**Already substantially implemented.** `analytics.py` computes, from real stored data only: by-status, by-role, by-location, by-employment, by-source, by-posted-week, match-score distribution, application/assessment/interview/offer/rejection counts, application→interview and interview→offer conversion rates, and SerpApi usage (estimated + confirmed).
-
-| Item | Current status | Priority | Dependencies | Complexity | Acceptance criteria |
-|---|---|---|---|---|---|
-| Core metrics | Already implemented | — | — | — | No action needed |
-| Direct unit test coverage (`test_analytics.py`) | Not confirmed to exist | P2 | None | Small | A dedicated test exercises each computed metric against known fixture data |
-| "Follow-ups due" as an analytics tile | `followups.py` computes this; confirm it's surfaced on the Analytics page itself, not only the dashboard | P3 | None | Small | Analytics page shows a follow-ups-due count sourced from `followups.py` |
-
-## Phase 8 — Recruiter Intelligence
-
-**Already implemented to the exact spec the task describes**, conservatively: `hr_search.py` uses only Google's own result snippets to surface LinkedIn profile *links* (never fetched, never scraped), always labeled unverified, with no automatic contact of anyone.
-
-| Item | Current status | Priority | Dependencies | Complexity | Acceptance criteria |
-|---|---|---|---|---|---|
-| Public-source-only recruiter links, labeled unverified, user decides whether to contact | Already implemented and matches the task's constraints exactly | — | — | — | No action needed |
-
-## Phase 9 — Dashboard Improvements
-
-The 9 pages the task lists (Dashboard, Find Jobs, Saved Jobs, Applications, Follow-ups, Resume Lab, Analytics, Settings, Archive) **already exist** as real views in `public/app.js`'s view-dispatch table, plus an admin view. Remaining work is polish, not construction.
-
-| Item | Current status | Priority | Dependencies | Complexity | Acceptance criteria |
-|---|---|---|---|---|---|
-| All 9 pages present | Already implemented | — | — | — | No action needed |
-| Dark mode / responsive base | Already implemented, single breakpoint (860px) | P2 | None | Small | Verified visually on a phone-width viewport and a tablet-width viewport, not just one breakpoint |
-| Loading states | Not confirmed — needs a UI pass | P2 | None | Small | Every async action shows a visible loading indicator, no silent dead time |
-| Empty states | Not confirmed — needs a UI pass | P2 | None | Small | Every list page has a designed empty state, not a blank area |
-| Error messages (user-facing) | Partially implemented — backend returns structured errors; frontend surfacing not audited in depth | P2 | None | Small | API errors render as a readable message, not a raw JSON dump or silent failure |
-| Keyboard accessibility | Not confirmed | P3 | None | Medium | Core flows (login, search, apply status change) usable via keyboard alone |
-
-## Phase 10 — Database and Scalability
-
-**Already done — this is not future work.** The project already has a working Postgres backend (`storage/pg.py`) with enforced row-level security (migrations `0002`/`0003`, a dedicated non-bypassing DB role), used in multi-user mode, alongside the original Google Sheets backend for single-user mode — exactly the "preserve Sheets where useful, avoid two conflicting sources of truth" outcome the task asks to evaluate. The one-way Sheets mirror (`sheet_mirror.py`) is deliberately non-authoritative, so there is exactly one source of truth per account at a time.
-
-| Item | Current status | Priority | Dependencies | Complexity | Acceptance criteria |
-|---|---|---|---|---|---|
-| Postgres schema + RLS | Already implemented and tested against a real throwaway Postgres | — | — | — | No action needed |
-| Backup/recovery documentation | README documents Neon point-in-time restore + migration rollback notes; not independently verified by running a restore | P2 | A Neon project | Small | A real restore-from-branch is performed once in a non-production project and documented |
-| No further migration recommended | — | — | — | — | Do not propose moving single-user mode off Sheets; no clear benefit demonstrated |
-
-## Phase 11 — Deployment and Monitoring
-
-| Item | Current status | Priority | Dependencies | Complexity | Acceptance criteria |
-|---|---|---|---|---|---|
-| Reproducible deployment config | Already implemented (`vercel.json`, env var list documented in README/`.env.example`) | — | — | — | No action needed |
-| Actual deployment | **Not done** — no evidence of a live Vercel deployment | **P1** | Fix P0 bug, do one Groq smoke test first | Small | `https://<app>/api/health` responds correctly in production |
-| Protected API endpoints | Already implemented (session/bearer auth per route) | — | — | — | No action needed |
-| Secure scheduled execution | Already implemented (`CRON_SECRET` bearer check) | — | — | — | No action needed |
-| Health checks | Already implemented (`/api/health`, config-presence + storage reachability) | P2 | — | Small | Confirm it also surfaces Postgres `rls_status()` when RLS setup fails (currently unconfirmed — see `KNOWN_ISSUES.md`) |
-| Run summaries | Partially implemented (JSONL verification logs); no human-readable per-run summary surfaced in the dashboard | P3 | None | Small | Dashboard shows a one-line summary of the last run (found/verified/errors) |
-| Failure notifications | Not implemented (depends on Phase 6's notification provider decision) | P3 | Phase 6 | Medium | An operator is notified if a scheduled run fails outright (not just logged) |
-| Deployment rollback | README documents `vercel rollback`; not exercised in this audit | P3 | A deployment to roll back | Small | One rollback performed and confirmed in a non-production deployment |
-| Quota-exhaustion / failed-search monitoring | `budget.py` tracks and limits usage; no external alerting if a run silently finds 0 jobs due to exhausted quota | P2 | None | Small | A run that hits its SerpApi budget limit is visibly flagged in the dashboard, not just silently truncated |
+Everything below closes a gap. None of it starts from scratch.
 
 ---
 
-## Recommended implementation order (across all phases)
+## P0: critical fixes
 
-1. **P0 — Fix `_resume_args()` bug** (Phase 1). Trivial, unblocks a real user-facing feature.
-2. **P0 — One supervised live Groq smoke test** (Phase 5). Gates trust in the entire Resume Lab / tailoring feature set.
-3. **P1 — Activate exactly one scheduler, once, deliberately** (Phase 1 / 11), then do one real Vercel deployment and confirm `/api/health` in production.
-4. **P1 — Add direct unit tests for `applications.py` and `analytics.py`** (Phase 4 / 7) to close the only real test-coverage gap found in an otherwise well-tested codebase.
-5. **P2 — `.env.example` hygiene, manual-review queue for Needs Review jobs, dashboard loading/empty/error-state pass, follow-up notifications decision (with explicit cost/privacy sign-off before building).**
-6. **P3 — Everything else**: configurable match weights, structured exclusions, suspicious-posting heuristics, expanded skill dictionary, Jobvite/SmartRecruiters coverage, run summaries, rollback drill.
+| ID | Item | Current status | User benefit | Dependencies | Complexity | Acceptance criteria | How to test |
+|---|---|---|---|---|---|---|---|
+| P0-1 | ~~Implement `cron_all_users()` (N1)~~ **done in code**: deploy after approval | Implemented and tested; not deployed | Twice-daily searches actually happen | None | Small | An authorised GET to `/api/run` returns 200 with one result per active user; a `cron` run row appears | New test: authorised GET in mocked Postgres mode. Live: Vercel → Cron Jobs → "Run" once, then check that the history row says `cron`. |
+| P0-2 | ~~Fit multi-user cron into 300 s~~ **done in code**: per-user slices, least recently searched first, the rest deferred | Implemented and tested; not deployed | Every user gets their scheduled search | P0-1 | Small–Medium | Each cron invocation processes users round-robin (the least recently run first) until the time budget is spent; the rest go next slot | Unit test of the user ordering and time cut-off |
+| P0-3 | Set `CRON_SECRET` on Vercel | Unknown | Without it, cron gets 401 | Owner | Trivial | Vercel env shows `CRON_SECRET` | `/api/health` cron flag, or one manual cron trigger |
+| P0-4 | Rotate exposed credentials (N2) | Open | Prevents misuse of leaked keys | Owner | Small | New SerpApi key, Groq key, Neon password and service-account key are in Vercel and `.env`; old ones revoked | `/api/health` ok; one search |
+
+## P1: needed before dependable daily use
+
+| ID | Item | Current status | User benefit | Dependencies | Complexity | Acceptance criteria | How to test |
+|---|---|---|---|---|---|---|---|
+| P1-1 | Robots.txt / job-board refusals → a clear non-retry reason (N4) | Mislabelled as "verification error"; retried | Honest status; no wasted retries | None | Small | The reason reads "site does not allow automated checks"; `retry=False` | Unit test with a mocked robots disallow |
+| P1-2 | Remove the diagnostic run row and its 16 phantom calls (N5) | Open | Correct history and budget | Owner approval for a production write | Trivial | Row gone; usage reduced by 16 | Read-only query before and after |
+| P1-3 | Raise the live verification yield (N3) | 0 of 85 Verified; the `company_pages` provider (new) targets this, so **measure after deploying it** before changing gates | "Verified" becomes meaningful | Investigation first | Medium | Measure before changing: sample 20 Needs Review jobs by hand and record what evidence would legitimately verify each. Then add **one** evidence path that keeps the never-HTTP-200-alone rule, e.g. accepting an official domain from the employer's own ATS or apply-link domain when the apply URL sits on that domain. | Replay the sample offline (fixtures); target at least 25% Verified with 0 false Verified on the hand-checked set |
+| P1-4 | Show when resume roles weren't used (N14) | Silent fallback | The user knows what was searched | None | Small | The run summary says "resume profile not found; used default roles" | Unit test |
+| P1-5 | Stop local runs writing to production | The local `.env` points at Neon | Avoids repeats of N5 | None | Small | A local `.env.local` for a dev branch database; production URL only on Vercel | Check `.env` against the Neon branch |
+| P1-6 | Observe 5 more live searches after `4cedc3b` | 1 observed | Confidence in the time budget | None | Trivial | Every run `ok`, ≤ 240 s, searches ≈ allowance | Read-only runs query |
+
+## P2: useful improvements
+
+| ID | Item | Current status | User benefit | Dependencies | Complexity | Acceptance criteria | How to test |
+|---|---|---|---|---|---|---|---|
+| P2-1 | Needs Review queue showing the evidence | Jobs list filter only; evidence not shown | Quick manual checks | None | Small | A card shows the gate that failed and the URLs checked (from `verification.checks`) | Snapshot of the API response |
+| P2-2 | Recheck saved jobs for closure | Only at discovery time | Avoid applying to closed jobs | P0-1 | Medium | Saved jobs are rechecked every 3 days; closed ones are flagged | Unit test with a mocked closed page |
+| P2-3 | Failure visibility: last-run banner and cron failure in Admin | Vercel logs only | Problems noticed without opening Vercel | P0-1 | Small | Admin view shows the last cron result per user | API test |
+| P2-4 | `.env.example` placeholder sheet ID (N11) | Real ID | Hygiene | None | Trivial | Placeholder value | grep |
+| P2-5 | `rls_status()` also checks FORCE RLS and the policies per table (N12) | Role check only | Catches a half-applied migration | None | Small | Health shows "NOT enforced: table X" if a policy is missing | Postgres test dropping a policy |
+| P2-6 | Mobile and keyboard pass | Unknown | Usable on a phone | None | Small | Core flows work at 375px and with keyboard only | Manual checklist |
+| P2-7 | Notifications (email digest) | Not implemented | Reminders without opening the app | **The owner chooses a provider** and accepts the privacy and cost | Medium | Opt-in, off by default | Mocked provider test |
+
+## Source-priority follow-ups (from the 2026-10-12 work)
+
+| ID | Item | Why | Acceptance criteria |
+|---|---|---|---|
+| S-1 | Measure the provider mix live | Provider value is unknown until real runs | 5 live runs; per-provider candidates, Verified count and parse-skip rate recorded from the run summary |
+| S-2 | Track the LinkedIn/Naukri result-title parse rate | Google can change title formats | The run summary counts skipped (unparseable) results; alert when the rate exceeds 50% |
+| S-3 | Seed `company_pages` from more employers (e.g. top fresher recruiters as a curated list) | Covers employers before anyone searched for them | A `companies.json` similar to `boards.json`, still resolved through Knowledge Graph/Wikidata evidence |
+| S-4 | A licensed job-data provider for LinkedIn/Naukri, if one is ever needed | Google coverage is partial | Only with documented terms and the owner's approval of the cost |
+
+## P3: optional
+
+- Auto-tailor the resume when Apply is pressed (README future scope). This builds on `tailor.py`; keep the guards.
+- Add SmartRecruiters boards (N8) and more Greenhouse/Lever companies to `boards.json`.
+- Configurable match weights.
+- A broader skill dictionary for non-data roles.
+- Show which tailoring suggestions were dropped.
+- Unify run-ID time zones (N15).
+- Jobvite: permanent gap; only revisit if a public API appears.
+
+## Order of work
+
+1. P0-1, P0-2 and P0-3 together (cron).
+2. P0-4 (rotate credentials).
+3. P1-2 and P1-5 (clean data; separate dev database).
+4. P1-1 and P1-4 (honest reasons).
+5. P1-6 (observe runs).
+6. P1-3 (verification yield, investigation first).
+7. P2 items as needed.

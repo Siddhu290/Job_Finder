@@ -112,6 +112,8 @@ def _row_updates(row, cells, new, job, now):
     if old and old not in STATUSES:
         return out  # user-defined status (e.g. "Applied"): never override
     set_ = lambda h, v: out.append({"range": _cell(row, h), "values": [[v]]})
+    if job and job.experience and cells[C["Experience Requirement"]].strip() == "Not stated":    # job_row's placeholder
+        set_("Experience Requirement", job.experience)      # only replaces our own placeholder, never a real value
     if new == VERIFIED:
         if old != VERIFIED:
             set_("Verification Status", VERIFIED)
