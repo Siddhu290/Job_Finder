@@ -202,3 +202,14 @@ def test_new_bullet_copies_the_templates_own_formatting_and_cannot_float():
                                "text": "Integrated REST APIs in the Django backend", "evidence": "Frameworks: Django, REST APIs"}], JD_DJ)
     assert r["applied"] == 1 and "must follow an existing bullet" in r["skipped"][0]["reason"]
     assert "    \\resumeItem{Built an emotion-aware chatbot using OpenCV}\n    \\resumeItem{Developed the Django backend with MongoDB for the chatbot}\n" in r["tex"]
+
+
+def test_pdf_text_round_trip_keeps_hyphens_titles_and_wrapped_bullets():
+    text = ("Asha Kulkarni\nasha@example.com\nEXPERIENCE\nOdoo Python Developer (Sept 2025 – Present)\n"
+            "• Built a data‑science‑focused dashboard for weekly reporting using Python, SQL and\nPower BI with the sales team.\n"
+            "MET Institute of Engineering Nashik, Maharashtra\nEDUCATION\nB.E. Computer Engineering Aug 2021 – Jul 2025\n")
+    tex = lx.to_latex(text)
+    assert "data-science-focused" in tex                                              # non-breaking hyphens kept
+    assert r"\entry{Odoo Python Developer}{Sept 2025 – Present}" in tex                # bracketed dates go right
+    assert r"\item Built a data-science-focused dashboard for weekly reporting using Python, SQL and Power BI with the sales team." in tex
+    assert r"{MET Institute of Engineering}{Nashik, Maharashtra}" in tex

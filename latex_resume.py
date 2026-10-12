@@ -20,7 +20,10 @@ from tailor import _norm, _numbers, MAX_JOB_CHARS
 # character of the draft is escaped, so text like "\input{...}" in a resume or job ad can never run as LaTeX.
 _TEX_SPECIAL = {"\\": r"\textbackslash{}", "&": r"\&", "%": r"\%", "$": r"\$", "#": r"\#", "_": r"\_", "{": r"\{",
                 "}": r"\}", "~": r"\textasciitilde{}", "^": r"\textasciicircum{}", "<": r"\textless{}", ">": r"\textgreater{}",
-                "₹": "Rs. ", "→": r"$\rightarrow$", "✓": "", "●": "", "▪": "", "\t": " "}
+                "₹": "Rs. ", "→": r"$\rightarrow$", "✓": "", "●": "", "▪": "", "\t": " ",
+                # hyphen and space variants (AI text and PDFs use them); dropping them glued words together
+                "\u2010": "-", "\u2011": "-", "\u2012": "-", "\u2212": "-", "\u00ad": "", "\u00a0": " ", "\u202f": " ",
+                "\u2009": " ", "\u200b": ""}
 _SECTION_WORD = (r"(?:summary|profile|objective|career objective|experience|internships?|education|skills|projects|"
                  r"certifications?|achievements|awards|publications|languages|interests|hobbies|positions? of responsibility|"
                  r"extra[- ]?curricular(?: activities)?|activities|training|courses|coursework|volunteering|leadership|declaration)")
@@ -101,15 +104,56 @@ _PLACE = re.compile(r"\b(remote|on-?site|hybrid|virtual|wfh)\b|^\(?[A-Z][A-Za-z 
 _CONTACT = re.compile(r"@|\+?\d[\d ()-]{7,}|https?://|www\.|linkedin|github|\.com\b", re.I)
 
 
+_STATES = ("Maharashtra|Karnataka|Telangana|Tamil Nadu|Haryana|Uttar Pradesh|West Bengal|Gujarat|Kerala|Rajasthan|"
+           "Andhra Pradesh|Odisha|Madhya Pradesh|Punjab|Goa|Delhi|India|Remote")
+def _trail_place():
+    from filters import INDIA_PLACES
+    cities = "|".join(sorted((re.escape(c) for c in INDIA_PLACES), key=len, reverse=True))
+    return re.compile(rf"\s((?:{cities}),\s*(?:{_STATES}))\s*$", re.I)
+
+
+_TRAIL_PLACE = _trail_place()       # a known city, then a state/country: "... Nashik, Maharashtra"
+
+
 def _split_right(line: str):
     """('left', 'right') when the line ends with a date range or a place (shown right-aligned), else (line, '')."""
+    paren = re.match(r"^(.*\S)\s*\(([^()]+)\)\s*$", line)          # "Odoo Python Developer (Sept 2025 – Present)"
+    if paren and _DATES.fullmatch(paren.group(2).strip()):
+        return paren.group(1).rstrip(" ,–—-|"), paren.group(2).strip()
     parts = [x.strip() for x in re.split(r"\s+\|\s+|\t+|\s{3,}", line) if x.strip()]
     if len(parts) >= 2 and (_DATES.fullmatch(parts[-1]) or _PLACE.search(parts[-1])):
         return " | ".join(parts[:-1]), parts[-1]
     m = _DATES.search(line)
     if m and len(line[:m.start()].strip(" ,–—-|")) > 3:          # "...Engineering   Aug 2021 – Jul 2025"
         return line[:m.start()].rstrip(" ,–—-|"), m.group(1)
+    m = _TRAIL_PLACE.search(line)                                   # "MET Institute of Engineering Nashik, Maharashtra"
+    if m and len(line[:m.start()].strip(" ,–—-|")) > 3 and words(line)[0] not in ACTION_VERBS:
+        return line[:m.start()].rstrip(" ,–—-|"), m.group(1)
     return line, ""
+
+
+def _looks_like_title(line: str) -> bool:
+    """Short and not a sentence: a job/project/school name, not a description."""
+    return len(line) <= 90 and not line.rstrip().endswith((".", ";", ":"))
+
+
+_CONTINUES = (",", "-", "–", "&", "/", " and", " with", " of", " the", " using", " in", " to", " for", " via", " on", " from")
+
+
+def _join_wrapped(lines: list) -> list:
+    """PDF text breaks a long bullet over several lines; join a continuation line back onto its bullet/sentence."""
+    out = []
+    for raw in lines:
+        line = raw.strip()
+        prev = out[-1].strip() if out else ""
+        joinable = (prev and line and not _BULLET.match(raw) and not _SECTION.match(line) and not _SECTION.match(prev)
+                    and (_BULLET.match(out[-1]) or len(prev) > 60)
+                    and (line[0].islower() or prev.endswith(_CONTINUES)))
+        if joinable:
+            out[-1] = out[-1].rstrip() + " " + line
+        else:
+            out.append(raw)
+    return out
 
 
 def to_latex(text: str) -> str:
@@ -120,6 +164,7 @@ def to_latex(text: str) -> str:
     while lines and not lines[0].strip():
         lines.pop(0)
     first = next((i for i, l in enumerate(lines) if _SECTION.match(l.strip())), len(lines))
+    lines = lines[:first] + _join_wrapped(lines[first:])
     head = [l.strip() for l in lines[:first] if l.strip()]
     body = [r"\begin{document}"]
     if head:
@@ -159,7 +204,8 @@ def to_latex(text: str) -> str:
                 body.append(r"\textbf{" + tex_escape(label.group(1)) + r":} " + _tex_inline(label.group(2)) + r"\par")
             elif right:
                 body.append((r"\entry{" if new_entry else r"\subentry{") + _tex_inline(left) + "}{" + _tex_inline(right) + "}")
-            elif new_entry and (_BULLET.match(nxt) or _split_right(nxt.strip())[1]):
+            elif new_entry and _looks_like_title(line) and (_BULLET.match(nxt) or _split_right(nxt.strip())[1]
+                                                            or _DATES.fullmatch(nxt.strip())):
                 body.append(r"\etitle{" + _tex_inline(line) + "}")     # entry title above its details
             else:
                 body.append(_tex_inline(line) + r"\par")

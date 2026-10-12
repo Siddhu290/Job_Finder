@@ -605,7 +605,7 @@ function atsPanel() {
         el("button", { class: "btn", disabled: !v || null, async onclick() {
           out.replaceChildren(el("p", { class: "muted" }, el("span", { class: "spinner" }), " Asking the AI for truthful suggestions…"));
           try { out.replaceChildren(tailorResult(await post("/api/tailor", { resume_id: S.resumeId, ...target() }), pick.value ? job(pick.value) : null, label(), target())) }
-          catch (e) { out.replaceChildren(el("p", { class: "notice bad" }, e.message)) } } }, "AI suggestions & tailored draft")),
+          catch (e) { out.replaceChildren(el("p", { class: "notice bad" }, e.message)) } } }, "Tailor for this job (keywords only)")),
       rec, jdBox, out);
     recommend();
   };
@@ -659,6 +659,7 @@ function latexEditsResult(r, j, jobLabel, jobRef) {
   const addBoxes = adds.map(a => el("input", { type: "checkbox", "aria-label": "Add bullet " + a.id }));   // unticked: confirm each
   const out = el("div", { "aria-live": "polite" });
   return el("div", { style: "margin-top:12px" },
+    r.converted ? el("p", { class: "notice ok" }, "Your resume was placed into the standard one-page template exactly as written. Only the keyword changes and new bullets you tick below are applied.") : "",
     r.warnings.map(w => el("p", { class: "notice" }, "⚠ " + w)),
     r.summary ? el("p", {}, r.summary) : "",
     el("div", { class: "tags", style: "margin:6px 0" }, r.keywords.map(k => el("span", { class: "tag " + (k.in_resume ? "ok" : "warn"), title: k.in_resume ? "Already in your resume" : "Not in your resume: add only if true" }, (k.in_resume ? "✓ " : "+ ") + k.keyword))),

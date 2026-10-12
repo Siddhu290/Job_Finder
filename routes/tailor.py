@@ -42,8 +42,8 @@ class handler(BaseHTTPRequestHandler):
                     tex = resumes.get_text(webapi.store(self), str(body["resume_id"]))
                 except KeyError:
                     return webapi.send(self, 404, {"error": "No such resume"})
-            if not latex_resume.is_latex(tex):
-                return webapi.send(self, 400, {"error": "Not a LaTeX resume"})
+            if not latex_resume.is_latex(tex):         # a PDF/DOCX resume: the same default template it was shown in
+                tex = latex_resume.to_latex(tex)
             edits = body.get("edits") if isinstance(body.get("edits"), list) else []
             desc = str(body.get("job_text", ""))[:20000]
             if body.get("job_id"):
@@ -69,10 +69,13 @@ class handler(BaseHTTPRequestHandler):
                     text = resumes.get_text(st, str(body["resume_id"]))
                 except KeyError:
                     return webapi.send(self, 404, {"error": "No such resume"})
-            if latex_resume.is_latex(text):         # the user's own .tex: exact edits to approve, layout untouched
-                out = latex_resume.propose_edits(text, job.get("Job Title", ""), job.get("Company", ""), desc,
+            # Every resume is tailored the same way: keyword-only edits + grounded new bullets, layout untouched.
+            # A PDF/DOCX resume is first placed into the default template (deterministic, no AI rewriting).
+            tex = text if latex_resume.is_latex(text) else latex_resume.to_latex(text)
+            if len(latex_resume.to_plain(tex)) >= 200:
+                out = latex_resume.propose_edits(tex, job.get("Job Title", ""), job.get("Company", ""), desc,
                                                  webapi.llm_key(self, st) or None)
-                return webapi.send(self, 200, {**out, "tex": text})
+                return webapi.send(self, 200, {**out, "tex": tex, "converted": not latex_resume.is_latex(text)})
             out = tailor.tailor(text, job.get("Job Title", ""), job.get("Company", ""), desc,
                                 webapi.llm_key(self, st) or None)
             return webapi.send(self, 200, out)

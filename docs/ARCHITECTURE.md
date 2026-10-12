@@ -109,6 +109,8 @@ New skills are flagged and left unticked by default. You tick the edits you want
 
 It is inserted under an existing bullet using that line's own formatting (`\item`, `\resumeItem{}`, indentation), so the layout is unchanged. New bullets are unticked until the user confirms them. `apply_edits` re-checks every edit on the server before applying it, so the layout never changes.
 
+**Every resume is tailored the same way.** A PDF/DOCX resume is first placed into the default template from its *original* text: deterministic, no AI. It then gets the same keyword-only edits and grounded new bullets as a LaTeX resume. The older AI "full rewrite" draft is no longer used for tailoring. In a live preview it merged two jobs into one line.
+
 **Plain-text resumes: the default layout for every user without their own `.tex`.** `to_latex` places the text into a fixed template modelled on the owner's sample resume:
 - centred name in capitals, italic tagline, one contact line separated by "•";
 - capitalised section headings, each with a full-width rule;
