@@ -97,3 +97,5 @@ def test_tailor_api(monkeypatch):
     assert post(tailor_api.handler, key, {"job_id": "J9", "resume_text": RESUME})[0] == 404
     code, out = post(tailor_api.handler, key, {"job_id": "J1", "resume_text": RESUME})
     assert code == 200 and out["keywords"] == [{"keyword": "Tableau", "in_resume": False}]
+    # a text (PDF/DOCX) resume is placed into the default template and tailored keyword-only; the AI never rewrites it
+    assert out["mode"] == "latex" and out["converted"] is True and "\\documentclass" in out["tex"] and "draft" not in out

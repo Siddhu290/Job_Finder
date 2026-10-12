@@ -1,6 +1,6 @@
 # Feature Matrix
 
-**Audit date:** 2026-10-12 · **Commit:** `4cedc3b`, plus uncommitted source-priority work (not deployed) · **Tests:** 263 passed, 0 failed, 0 skipped
+**Audit date:** 2026-10-12 · **Commit:** `4cedc3b`, plus uncommitted source-priority work (not deployed) · **Tests:** 278 passed, 0 failed, 0 skipped
 
 Rows marked *(new)* describe code that is not deployed, so its "Live" column is "no" until it is.
 

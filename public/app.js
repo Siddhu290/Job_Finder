@@ -13,7 +13,7 @@ const S = { data: null, view: "dashboard", page: 25, analytics: null, range: "30
   f: { q: "", role: "All", loc: "", mode: "All", exp: "All", posted: "All", vstatus: "All", minMatch: 0, company: "", prio: "All",
        sort: "priority", showHidden: false, source: "All", officialFirst: false } };
 const VIEWS = [["dashboard", "Dashboard"], ["find", "Find Jobs"], ["saved", "Saved Jobs"], ["apps", "Applications"],
-  ["follow", "Follow-ups"], ["resume", "Resume Lab"], ["analytics", "Analytics"], ["settings", "Settings"], ["archive", "Archive"],
+  ["follow", "Follow-ups"], ["profile", "My Profile"], ["resume", "Resume Lab"], ["analytics", "Analytics"], ["settings", "Settings"], ["archive", "Archive"],
   ["admin", "Admin"]];
 const isAdmin = () => !!(S.data && S.data.user && S.data.user.multi_user && S.data.user.role === "admin");
 const IN_PROGRESS = ["Applied", "Online Assessment", "Recruiter Screening", "Technical Interview", "HR Interview"];
@@ -483,23 +483,28 @@ function viewResume() {
 }
 function resumeBody(c) {
   const p = c.profiles.find(x => x.id === c.active);
-  const file = el("input", { type: "file", accept: ".pdf,.docx", hidden: true, async onchange(e) {
+  const upload = async e => {
     const f = e.target.files[0]; if (!f) return;
     try {
-      const name = prompt("Name for this resume (e.g. “Data Analyst – Oct 2026”)", f.name.replace(/\.(pdf|docx)$/i, "")) || "";
+      const name = prompt("Name for this resume (e.g. “Data Analyst – Oct 2026”)", f.name.replace(/\.(pdf|docx|tex)$/i, "")) || "";
       toast("Reading and analysing your resume…", 30000);
       const res = await post("/api/resume", { file: await fileToBase64(f), filename: f.name, name });
       if (res.version) S.resumeId = res.version.id;
       delete res.text; S.profiles = res;
+      if (res.details && res.version) detailsDialog(res.version.id, res.details, res.issues, () => render());
       if (res.profile_error) toast(`Saved as “${res.version ? res.version.name : "your resume"}” in My resumes, but the AI profile couldn't be built: ${res.profile_error}`, 12000);
       else toast(res.version ? `Saved as “${res.version.name}” in My resumes. Review the profile below.` : "Profile created. Review it below.");
       render(); load();
     } catch (err) { fail(err) } finally { e.target.value = "" }
-  } });
+  };
+  const file = el("input", { type: "file", accept: ".pdf,.docx", hidden: true, onchange: upload });
+  const texFile = el("input", { type: "file", accept: ".tex", hidden: true, onchange: upload });
   const head = el("section", { class: "panel" }, el("div", { class: "row" },
     c.profiles.length > 0 && el("label", { class: "f" }, "Active profile", el("select", { onchange(e) { saveProfile({ action: "activate", id: e.target.value }, "Profile switched").then(render) } },
       c.profiles.map(x => el("option", { value: x.id, selected: x.id === c.active || null }, x.name)))),
     el("button", { class: "btn primary", onclick() { file.click() } }, "Upload resume (PDF/DOCX)"), file,
+    el("button", { class: "btn", title: "Your LaTeX resume: for each job only its keywords are changed; the layout stays exactly as it is",
+      onclick() { texFile.click() } }, "Upload LaTeX template (.tex)"), texFile,
     p ? el("label", { class: "chk" }, el("input", { type: "checkbox", checked: c.use_in_search || null, onchange(e) { saveProfile({ action: "use_in_search", value: e.target.checked }) } }), "Use this profile's roles in searches") : "",
     p ? el("button", { class: "btn danger", onclick() { if (confirm(`Delete profile "${p.name}"? Your saved resumes are kept.`)) saveProfile({ action: "delete", id: p.id }, "Deleted").then(render) } }, "Delete profile") : ""));
   const profilePanel = !p ? el("div", { class: "empty" }, "No resume profile yet. Upload your resume to get started.") : (() => {
@@ -536,7 +541,9 @@ function libraryPanel() {
     const SRC = { upload: "uploaded", pasted: "pasted", tailored: "tailored", edited: "edited" };
     box.replaceChildren(el("div", { class: "row", style: "justify-content:space-between" }, el("h2", { style: "margin:0" }, `My resumes (${vs.length})`),
         el("div", { class: "row" }, el("button", { class: "btn small", onclick() { pasteDialog("Add a resume version", async (name, text) => {
-          try { const v = await post("/api/resumes", { action: "save", name, text, source: "pasted" }); S.resumeId = v.id; toast(`Saved “${v.name}”`); reload(); return true } catch (e) { fail(e); return false } }) } }, "+ Paste a version"))),
+          try { const v = await post("/api/resumes", { action: "save", name, text, source: "pasted" }); S.resumeId = v.id; toast(`Saved “${v.name}”`); reload();
+            if (v.format !== "latex") setTimeout(() => checkDetails(v.id, reload), 50);
+            return true } catch (e) { fail(e); return false } }) } }, "+ Paste a version"))),
       el("p", { class: "muted" }, "Every upload, pasted version and approved tailored draft is kept here under its own name — pick any of them for an ATS check or tailoring. Stored encrypted; only you can see them."),
       legacy.length ? el("p", { class: "notice" }, "A resume from the earlier version is stored only in this browser. ",
         el("button", { class: "btn small", async onclick() {
@@ -546,11 +553,14 @@ function libraryPanel() {
         vs.map(v => el("tr", {},
           el("td", {}, el("input", { type: "radio", name: "resumePick", "aria-label": "Use " + v.name, checked: S.resumeId === v.id || null, onchange() { S.resumeId = v.id; drawAts() } })),
           el("td", {}, el("b", {}, v.name), v.job ? el("div", { class: "muted" }, "for " + v.job) : ""),
-          el("td", {}, el("span", { class: "tag" + (v.source === "tailored" ? " acc" : "") }, SRC[v.source] || v.source)),
+          el("td", {}, el("span", { class: "tag" + (v.source === "tailored" ? " acc" : "") }, SRC[v.source] || v.source), v.format === "latex" ? el("span", { class: "tag ok", style: "margin-left:4px" }, "LaTeX") : ""),
           el("td", { class: "mono" }, v.created), el("td", { class: "muted" }, `${Math.round(v.chars / 100) / 10}k chars`),
           el("td", {}, el("span", { class: "row" },
             el("button", { class: "btn small", onclick() { const n = prompt("New name", v.name); if (n) post("/api/resumes", { action: "rename", id: v.id, name: n }).then(reload).catch(fail) } }, "Rename"),
-            el("button", { class: "btn small", async onclick() { try { downloadDocx(await resumeText(v.id), v.name) } catch (e) { fail(e) } } }, "DOCX"),
+            v.format !== "latex" ? el("button", { class: "btn small" + (v.checked ? "" : " primary"), title: v.checked ? "Checked " + v.checked : "Not checked yet",
+              onclick() { checkDetails(v.id, reload) } }, v.checked ? "Edit details" : "Check details") : "",
+            el("button", { class: "btn small", async onclick() { try { latexDialog((await post("/api/tailor", { action: "latex", resume_id: v.id })).tex, v.name) } catch (e) { fail(e) } } }, "LaTeX / PDF"),
+            v.format !== "latex" ? el("button", { class: "btn small", async onclick() { try { downloadDocx(await resumeText(v.id), v.name) } catch (e) { fail(e) } } }, "DOCX") : "",
             el("button", { class: "btn small danger", onclick() { if (confirm(`Delete “${v.name}”? This can't be undone.`)) post("/api/resumes", { action: "delete", id: v.id }).then(() => { if (S.resumeId === v.id) S.resumeId = null; reload() }).catch(fail) } }, "Delete"))))))
         : el("div", { class: "empty" }, "No resumes yet. Upload one above or paste a version."));
     S.resumes = vs; drawAts();
@@ -573,7 +583,20 @@ function atsPanel() {
   const out = el("div", { "aria-live": "polite" });
   const target = () => pick.value ? { job_id: pick.value } : { job_text: jd.value, job_title: jdTitle.value };
   const label = () => pick.value ? `${job(pick.value).title} · ${job(pick.value).company}` : (jdTitle.value || "pasted job");
-  pick.onchange = () => { jdBox.hidden = !!pick.value; S.tailorJob = pick.value || null };
+  const rec = el("div", { "aria-live": "polite" });
+  const recommend = async () => {
+    rec.replaceChildren();
+    if (!pick.value || !S.resumes || !S.resumes.some(v => v.source === "tailored")) return;
+    try {
+      const { recommendation: r } = await post("/api/resumes", { action: "recommend", job_id: pick.value, current_id: S.resumeId || "" });
+      if (!r || r.version.id === S.resumeId) return;
+      rec.replaceChildren(el("p", { class: "notice ok" }, "Recommended for this job: ", el("b", {}, r.version.name),
+        ` — tailored earlier for “${r.version.role || r.version.job}” (${r.similarity}% similar: role ${r.role_match}%, skills ${r.skill_overlap}%).`,
+        r.ats != null ? ` ATS score for this job: ${r.ats}` + (r.current_ats != null ? ` vs ${r.current_ats} for the selected resume.` : ".") : "", " ",
+        el("button", { class: "btn small primary", onclick() { S.resumeId = r.version.id; drawAts(); toast(`Using “${r.version.name}”`) } }, "Use this version")));
+    } catch (e) { /* a recommendation is optional */ }
+  };
+  pick.onchange = () => { jdBox.hidden = !!pick.value; S.tailorJob = pick.value || null; recommend() };
   jdBox.hidden = !!pick.value;
   drawAts = () => {
     const v = (S.resumes || []).find(x => x.id === S.resumeId);
@@ -585,9 +608,10 @@ function atsPanel() {
           try { out.replaceChildren(atsResult(await post("/api/ats", { resume_id: S.resumeId, ...target() }))) } catch (e) { out.replaceChildren(el("p", { class: "notice bad" }, e.message)) } } }, "Check ATS score"),
         el("button", { class: "btn", disabled: !v || null, async onclick() {
           out.replaceChildren(el("p", { class: "muted" }, el("span", { class: "spinner" }), " Asking the AI for truthful suggestions…"));
-          try { out.replaceChildren(tailorResult(await post("/api/tailor", { resume_id: S.resumeId, ...target() }), pick.value ? job(pick.value) : null, label())) }
-          catch (e) { out.replaceChildren(el("p", { class: "notice bad" }, e.message)) } } }, "AI suggestions & tailored draft")),
-      jdBox, out);
+          try { out.replaceChildren(tailorResult(await post("/api/tailor", { resume_id: S.resumeId, ...target() }), pick.value ? job(pick.value) : null, label(), target())) }
+          catch (e) { out.replaceChildren(el("p", { class: "notice bad" }, e.message)) } } }, "Tailor for this job (keywords only)")),
+      rec, jdBox, out);
+    recommend();
   };
   drawAts();
   return box;
@@ -608,7 +632,8 @@ function atsResult(r) {
       : el("p", { class: "notice ok" }, "Nothing major to fix for this job."),
     el("p", { class: `muted` }, r.note), el("span", { class: `tag ${tone}` }, `${r.words} words · ${r.bullets} bullets · ${r.bullets_with_numbers} with numbers`));
 }
-function tailorResult(r, j, jobLabel) {
+function tailorResult(r, j, jobLabel, jobRef) {
+  if (r.mode === "latex") return latexEditsResult(r, j, jobLabel, jobRef || {});
   const draft = el("textarea", { rows: 18, "aria-label": "Tailored draft" }, r.draft || "");
   return el("div", { style: "margin-top:12px" },
     r.warnings.map(w => el("p", { class: "notice" }, "⚠ " + w)),
@@ -622,13 +647,205 @@ function tailorResult(r, j, jobLabel) {
       el("button", { class: "btn primary", async onclick() {
         const name = prompt("Name for this resume version", `${jobLabel}`.slice(0, 70)); if (!name) return;
         try {
-          const v = await post("/api/resumes", { action: "save", name, text: draft.value, source: "tailored", job: jobLabel });
+          const v = await post("/api/resumes", { action: "save", name, text: draft.value, source: "tailored", job: jobLabel, job_id: j ? j.id : "" });
           S.resumeId = v.id; toast(`Saved as “${v.name}” in My resumes`);
           if (j) setApp(j, { "Resume Version": v.name }, "Linked to this application");
           render();
         } catch (e) { fail(e) } } }, "Save as new resume version"),
       el("button", { class: "btn", onclick() { downloadDocx(draft.value, jobLabel) } }, "Download DOCX"),
+      el("button", { class: "btn", async onclick() { try { latexDialog((await post("/api/tailor", { action: "latex", text: draft.value })).tex, jobLabel) } catch (e) { fail(e) } } }, "LaTeX / PDF"),
       el("button", { class: "btn", onclick() { printText(draft.value) } }, "Print / save PDF")));
+}
+// ---------- My Profile: one standard set of fields -> "Resume from my profile" in the standard format ----------
+const PROFILE_LISTS = {
+  education: { label: "Education", add: "+ Education", fields: [["school", "College / school"], ["place", "Place", "e.g. Nashik, Maharashtra"], ["degree", "Degree"], ["dates", "Dates", "e.g. Aug 2021 – Jul 2025"], ["score", "CGPA / score", "e.g. 7.60 / 10.00"], ["details", "Other details (one per line)", "", "list"]] },
+  experience: { label: "Experience", add: "+ Experience", fields: [["role", "Role"], ["company", "Company"], ["place", "On-Site / Remote / Hybrid / city"], ["dates", "Dates", "e.g. Jun 2024 – Aug 2024"], ["bullets", "What you did (one bullet per line)", "", "list"]] },
+  projects: { label: "Projects", add: "+ Project", fields: [["name", "Project name"], ["tech", "Tech stack", "e.g. Python, Django, MongoDB"], ["dates", "Dates (optional)"], ["bullets", "What you built (one bullet per line)", "", "list"]] },
+  skills: { label: "Technical skills", add: "+ Skill line", fields: [["label", "Group", "e.g. Languages"], ["values", "Skills", "e.g. Python, SQL, Java"]] },
+};
+function viewProfile() {
+  const root = el("div", {}, el("div", { class: "head" }, el("div", {}, el("h1", {}, "My Profile"),
+      el("div", { class: "sub" }, "Fill this in once. Your resume is created from it in the standard one-page format, and tailoring for a job only changes keywords."))),
+    el("div", { class: "empty" }, el("span", { class: "spinner" }), " Loading your profile…"));
+  Promise.all([post("/api/resumes", { action: "profile_get" }), api("/api/resumes")]).then(([r, lib]) => {
+    root.lastChild.replaceWith(profileForm(r.profile, r.issues, r.version_id, lib.versions));
+  }).catch(e => root.lastChild.replaceWith(el("p", { class: "notice bad" }, e.message)));
+  return [root];
+}
+function profileForm(profile, issues, versionId, versions) {
+  const p = JSON.parse(JSON.stringify(profile)), box = el("div", {});
+  const notes = w => (issues || []).filter(i => i.where === w).map(i => el("p", { class: "notice", style: "margin:4px 0" }, "⚠ " + i.message));
+  const input = (obj, key, label, ph = "", kind = "") => el("label", { class: "f", style: kind ? "grid-column:1/-1" : "" }, label,
+    kind === "list" || kind === "area"
+      ? el("textarea", { rows: kind === "area" ? 3 : Math.max(2, (obj[key] || []).length + 1), placeholder: ph, oninput(e) { obj[key] = kind === "list" ? e.target.value.split("\n").map(x => x.trim()).filter(Boolean) : e.target.value } },
+          kind === "list" ? (obj[key] || []).join("\n") : (obj[key] || ""))
+      : el("input", { type: "text", value: obj[key] || "", placeholder: ph, oninput(e) { obj[key] = e.target.value } }));
+  const grid = (...k) => el("div", { class: "grid", style: "grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px" }, ...k);
+  const draw = () => box.replaceChildren(
+    ...["name", "email", "phone"].flatMap(notes),
+    el("section", { class: "panel" }, el("h2", {}, "Personal details"),
+      grid(input(p, "name", "Full name"), input(p, "tagline", "Tagline (optional)", "e.g. Aspiring Python Developer | Data Science Enthusiast"),
+        input(p, "email", "Email"), input(p, "phone", "Phone", "e.g. 9518508756"), input(p, "linkedin", "LinkedIn", "linkedin.com/in/…"),
+        input(p, "github", "GitHub (optional)", "github.com/…"), input(p, "location", "Location (optional)", "e.g. Pune, Maharashtra"),
+        input(p, "summary", "Summary (optional, 2–3 lines)", "", "area"))),
+    ...Object.entries(PROFILE_LISTS).map(([key, spec]) => el("section", { class: "panel" }, el("h2", {}, spec.label), ...notes(key),
+      ...p[key].map((item, i) => el("div", { style: "border-top:1px solid var(--border);padding-top:10px;margin-top:10px" }, ...notes(`${key}.${i}`),
+        grid(...spec.fields.map(([f, label, ph, kind]) => input(item, f, label, ph || "", kind || ""))),
+        el("button", { class: "btn small danger", type: "button", style: "margin-top:6px", onclick() { p[key].splice(i, 1); draw() } }, "Remove"))),
+      el("button", { class: "btn small", type: "button", style: "margin-top:10px", onclick() { p[key].push(Object.fromEntries(spec.fields.map(([f, , , k]) => [f, k === "list" ? [] : ""]))); draw() } }, spec.add))),
+    el("section", { class: "panel" }, el("h2", {}, "Certifications & achievements"),
+      grid(input(p, "certifications", "Certifications / training (one per line)", "e.g. Machine Learning Training – Symbiosis (2024)", "list"),
+        input(p, "achievements", "Achievements / positions of responsibility (one per line)", "", "list"))),
+    ...p.extra.map((sec, i) => el("section", { class: "panel" }, grid(input(sec, "title", "Section heading"), input(sec, "items", "Items (one per line)", "", "list")),
+      el("button", { class: "btn small danger", type: "button", onclick() { p.extra.splice(i, 1); draw() } }, "Remove section"))),
+    el("div", { class: "row", style: "margin:12px 0" },
+      el("button", { class: "btn small", type: "button", onclick() { p.extra.push({ title: "", items: [] }); draw() } }, "+ Other section"),
+      versions.filter(v => v.source !== "profile").length ? el("label", { class: "f", style: "flex-direction:row;align-items:center;gap:6px" }, "Import from an uploaded resume:",
+        el("select", { async onchange(e) {
+          if (!e.target.value) return;
+          if (!confirm("Replace the form with what's read from this resume? Nothing is saved until you press Save profile.")) { e.target.value = ""; return }
+          try { const r = await post("/api/resumes", { action: "profile_import", id: e.target.value }); Object.assign(p, r.profile); issues = r.issues; draw(); toast("Imported. Check every field, then Save profile.") }
+          catch (err) { fail(err) } } },
+          el("option", { value: "" }, "Choose…"), versions.filter(v => v.source !== "profile").map(v => el("option", { value: v.id }, v.name)))) : ""),
+    el("div", { class: "row", style: "position:sticky;bottom:0;background:var(--bg);padding:10px 0;border-top:1px solid var(--border)" },
+      el("button", { class: "btn primary", async onclick() {
+        try {
+          const r = await post("/api/resumes", { action: "profile_save", profile: p });
+          issues = r.issues; Object.assign(p, r.profile);
+          if (r.version) { versionId = r.version.id; S.resumeId = r.version.id }
+          toast(r.note || (r.issues.length ? `Saved. Resume updated. ${r.issues.length} thing(s) worth adding.` : "Saved. Your resume is up to date."));
+          draw();
+        } catch (e) { fail(e) } } }, "Save profile"),
+      versionId ? el("button", { class: "btn", async onclick() { try { latexDialog((await post("/api/tailor", { action: "latex", resume_id: versionId })).tex, p.name ? p.name + " – Resume" : "Resume") } catch (e) { fail(e) } } }, "LaTeX / PDF") : "",
+      versionId ? el("button", { class: "btn", onclick() { S.resumeId = versionId; go("resume") } }, "Use for tailoring →") : "",
+      issues && issues.length ? el("span", { class: "muted" }, `${issues.length} thing(s) worth adding or fixing (marked above)`) : el("span", { class: "muted" }, "All key details are filled in.")));
+  draw();
+  return box;
+}
+
+// ---------- "Check your details": what was read from the resume, corrected by the user before any resume is built ----------
+function detailsDialog(vid, details, issues, onSaved) {
+  const d = JSON.parse(JSON.stringify(details)), dlg = $("#dlg");
+  const blockIssues = w => (issues || []).filter(i => i.where === w).map(i => el("p", { class: "notice", style: "margin:4px 0" }, "⚠ " + i.message));
+  const field = (obj, key, label, opts = {}) => el("label", { class: "f", style: opts.wide ? "grid-column:1/-1" : "" }, label,
+    opts.area ? el("textarea", { rows: opts.rows || 3, oninput(e) { obj[key] = opts.list ? e.target.value.split("\n").map(x => x.trim()).filter(Boolean) : e.target.value } },
+      opts.list ? (obj[key] || []).join("\n") : (obj[key] || ""))
+      : el("input", { type: "text", value: obj[key] || "", placeholder: opts.ph || "", oninput(e) { obj[key] = e.target.value } }));
+  const grid = (...kids) => el("div", { class: "grid", style: "grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px" }, ...kids);
+  const NEW = { entry: () => ({ type: "entry", title: "", right: "", sub: "", sub_right: "", bullets: [] }), line: () => ({ type: "line", label: "", text: "", right: "" }) };
+  const draw = () => {
+    const sections = d.sections.map((sec, si) => el("fieldset", { class: "panel", style: "margin:10px 0" },
+      el("legend", {}, el("b", {}, sec.title || "Section")),
+      grid(field(sec, "title", "Section heading")),
+      sec.blocks.map((b, bi) => el("div", { style: "border-top:1px solid var(--border);margin-top:8px;padding-top:8px" },
+        blockIssues(`sections.${si}.blocks.${bi}`),
+        b.type === "entry" ? grid(field(b, "title", "Title (job / degree / school / project)"), field(b, "right", "Company / place (shown on the right)", { ph: "e.g. Alligator Infosoft (On-Site)" }),
+            field(b, "sub", "Second line", { ph: "e.g. Bachelor of Engineering, or the dates" }), field(b, "sub_right", "Dates (shown on the right)", { ph: "e.g. Jun 2024 – Aug 2024" }),
+            field(b, "bullets", "Bullets (one per line)", { area: true, list: true, rows: Math.max(2, b.bullets.length + 1), wide: true }))
+          : b.type === "line" ? grid(field(b, "label", "Label", { ph: "e.g. Languages" }), field(b, "text", "Text"), field(b, "right", "Right side (optional)"))
+          : b.type === "text" ? field(b, "text", "Text", { area: true })
+          : field(b, "bullets", "Bullets (one per line)", { area: true, list: true, rows: Math.max(2, b.bullets.length + 1) }),
+        el("button", { class: "btn small danger", type: "button", onclick() { sec.blocks.splice(bi, 1); draw() } }, "Remove"))),
+      el("div", { class: "row", style: "margin-top:8px" },
+        el("button", { class: "btn small", type: "button", onclick() { sec.blocks.push(NEW.entry()); draw() } }, "+ Entry"),
+        el("button", { class: "btn small", type: "button", onclick() { sec.blocks.push(NEW.line()); draw() } }, "+ Line"),
+        el("button", { class: "btn small danger", type: "button", onclick() { if (confirm(`Remove the “${sec.title}” section?`)) { d.sections.splice(si, 1); draw() } } }, "Remove section"))));
+    dlg.replaceChildren(
+      el("div", { class: "dh" }, el("h2", { style: "margin:0" }, "Check your details"), el("button", { class: "btn small", onclick() { dlg.close() } }, "Close")),
+      el("div", { style: "padding:0 18px 18px" },
+      el("p", { class: "muted" }, "This is what we read from your resume. Correct anything that's wrong — your resume is built from exactly these details, and tailoring only changes keywords in them."),
+      ...["name", "contacts", "sections"].flatMap(w => blockIssues(w)),     // replaceChildren doesn't flatten arrays
+      grid(field(d, "name", "Full name"), field(d, "tagline", "Tagline (optional)", { ph: "e.g. Aspiring Python Developer" }),
+        field(d, "contacts", "Email, phone, links (one per line)", { area: true, list: true, rows: 4, wide: true })),
+      ...sections,
+      el("div", { class: "row" }, el("button", { class: "btn small", type: "button", onclick() { d.sections.push({ title: "New section", blocks: [NEW.entry()] }); draw() } }, "+ Section")),
+      el("div", { class: "df" }, el("button", { class: "btn primary", async onclick() {
+        try {
+          const r = await post("/api/resumes", { action: "save_details", id: vid, details: d });
+          toast(r.issues.length ? `Saved. ${r.issues.length} thing(s) still worth checking.` : "Saved. Your resume will be built from these details.");
+          if (r.issues.length) { issues = r.issues; Object.assign(d, r.details); draw(); } else dlg.close();
+          if (onSaved) onSaved(r.version);
+        } catch (e) { fail(e) } } }, "Save details"))));
+  };
+  draw();
+  if (!dlg.open) dlg.showModal();
+}
+async function checkDetails(vid, onSaved) {
+  try { const r = await post("/api/resumes", { action: "details", id: vid }); detailsDialog(vid, r.details, r.issues, onSaved) } catch (e) { fail(e) }
+}
+
+// ---------- LaTeX: your own .tex, per-job edits, copy / download / Overleaf / PDF in the browser ----------
+function latexEditsResult(r, j, jobLabel, jobRef) {
+  const boxes = r.edits.map(e => el("input", { type: "checkbox", checked: !e.warning || null, "aria-label": "Apply edit " + e.id }));
+  const adds = r.additions || [];
+  const addBoxes = adds.map(a => el("input", { type: "checkbox", "aria-label": "Add bullet " + a.id }));   // unticked: confirm each
+  const out = el("div", { "aria-live": "polite" });
+  return el("div", { style: "margin-top:12px" },
+    r.converted ? el("p", { class: "notice ok" }, "Your resume was placed into the standard one-page template exactly as written. Only the keyword changes and new bullets you tick below are applied.") : "",
+    r.warnings.map(w => el("p", { class: "notice" }, "⚠ " + w)),
+    r.summary ? el("p", {}, r.summary) : "",
+    el("div", { class: "tags", style: "margin:6px 0" }, r.keywords.map(k => el("span", { class: "tag " + (k.in_resume ? "ok" : "warn"), title: k.in_resume ? "Already in your resume" : "Not in your resume: add only if true" }, (k.in_resume ? "✓ " : "+ ") + k.keyword))),
+    r.edits.length ? el("div", {},
+      el("h3", { style: "margin-top:10px" }, `Keyword changes for this job (${r.edits.length}) — tick the ones to apply`),
+      el("p", { class: "muted" }, "Only your bullets, summary and skills can change, and only their keywords. Name, contact details, education, job titles, companies, dates, project names and certifications always stay exactly as they are."),
+      el("table", {}, el("tr", {}, el("th", {}, "Apply"), el("th", {}, "Your LaTeX"), el("th", {}, "Becomes"), el("th", {}, "Why")),
+        r.edits.map((e, i) => el("tr", {}, el("td", {}, boxes[i]), el("td", { class: "mono" }, e.find), el("td", { class: "mono" }, e.replace),
+          el("td", { class: "muted" }, e.reason, e.warning ? el("div", { class: "tag warn" }, "⚠ " + e.warning) : ""))))) : el("p", { class: "notice" }, "No safe keyword changes were suggested for this job."),
+    adds.length ? el("div", {},
+      el("h3", { style: "margin-top:10px" }, `New bullets for this job (${adds.length}) — tick only the ones that are true`),
+      el("p", { class: "muted" }, "Each one only restates something your resume already shows (quoted below) and is added under the bullet shown, in your template's own format."),
+      el("table", {}, el("tr", {}, el("th", {}, "Add"), el("th", {}, "New bullet"), el("th", {}, "Goes after"), el("th", {}, "Based on / why")),
+        adds.map((a, i) => el("tr", {}, el("td", {}, addBoxes[i]), el("td", {}, el("b", {}, a.text)), el("td", { class: "mono" }, a.after),
+          el("td", { class: "muted" }, "“" + a.evidence + "”", el("div", {}, a.reason)))))) : "",
+    el("div", { class: "row", style: "margin-top:8px" },
+      el("button", { class: "btn primary", async onclick() {
+        try {
+          const res = await post("/api/tailor", { action: "latex_apply", resume_id: S.resumeId, ...jobRef,
+            edits: [...r.edits.filter((_, i) => boxes[i].checked), ...adds.filter((_, i) => addBoxes[i].checked)] });
+          out.replaceChildren(res.skipped.length ? el("p", { class: "notice" }, `${res.skipped.length} edit(s) skipped: ` + res.skipped.map(s => s.reason).join("; ")) : "",
+            el("p", { class: "notice ok" }, `${res.applied} edit(s) applied. Check the result, then copy it, open it in Overleaf or make the PDF.`),
+            latexTools(res.tex, jobLabel, j));
+        } catch (e) { fail(e) } } }, "Apply selected edits")),
+    out);
+}
+function latexTools(tex, name, j) {
+  const code = el("textarea", { rows: 16, class: "mono", spellcheck: "false", "aria-label": "LaTeX source" }, tex);
+  return el("div", { style: "margin-top:8px" }, code,
+    el("div", { class: "row", style: "margin-top:8px" },
+      el("button", { class: "btn primary", async onclick() { try { await navigator.clipboard.writeText(code.value); toast("LaTeX copied") } catch (e) { code.select(); toast("Press Ctrl+C to copy") } } }, "Copy LaTeX"),
+      el("button", { class: "btn", onclick() { saveFile(code.value, (name || "resume").replace(/[^\w.-]+/g, "_") + ".tex", "application/x-tex") } }, "Download .tex"),
+      el("button", { class: "btn", title: "Creates a new project in your Overleaf account; Overleaf makes the PDF", onclick() { openInOverleaf(code.value, name) } }, "Open in Overleaf ↗"),
+      el("button", { class: "btn", title: "Compiles on this device (first time downloads about 45 MB)", onclick() { pdfInBrowser(code.value, name) } }, "PDF in browser"),
+      el("button", { class: "btn", async onclick() {
+        const n = prompt("Name for this resume version", `${name || "Resume"}`.slice(0, 70)); if (!n) return;
+        try {
+          const v = await post("/api/resumes", { action: "save", name: n, text: code.value, source: "tailored", job: name || "", job_id: j ? j.id : "" });
+          S.resumeId = v.id; toast(`Saved as “${v.name}” in My resumes`);
+          if (j) setApp(j, { "Resume Version": v.name }, "Linked to this application");
+          render();
+        } catch (e) { fail(e) } } }, "Save as new resume version")));
+}
+function latexDialog(tex, name) {
+  const dlg = $("#dlg");
+  dlg.replaceChildren(el("div", { class: "dh" }, el("h2", { style: "margin:0" }, `LaTeX · ${name || "resume"}`), el("button", { class: "btn small", onclick() { dlg.close() } }, "Close")),
+    latexTools(tex, name, null));
+  dlg.showModal();
+}
+function saveFile(text, filename, type) {
+  const a = el("a", { href: URL.createObjectURL(new Blob([text], { type })), download: filename }); a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+function openInOverleaf(tex, name) {
+  // Overleaf's documented "open in Overleaf" form; your code goes to Overleaf only when you click.
+  const f = el("form", { method: "POST", action: "https://www.overleaf.com/docs", target: "_blank", hidden: true },
+    el("input", { type: "hidden", name: "encoded_snip", value: encodeURIComponent(tex) }),
+    el("input", { type: "hidden", name: "snip_name", value: (name || "Resume").slice(0, 60) }),
+    el("input", { type: "hidden", name: "engine", value: "pdflatex" }));
+  document.body.append(f); f.submit(); f.remove();
+}
+function pdfInBrowser(tex, name) {
+  const w = window.open("/pdf.html", "_blank"); if (!w) return toast("Allow pop-ups to make the PDF");
+  const send = e => { if (e.source === w && e.origin === location.origin && e.data === "pdf-ready") { w.postMessage({ tex, name }, location.origin); removeEventListener("message", send) } };
+  addEventListener("message", send);
 }
 async function downloadDocx(text, name) {
   try {
@@ -838,7 +1055,7 @@ function viewAdmin() {
 function render() {
   renderNav();
   if (!S.data) return;
-  const v = { dashboard: viewDashboard, find: viewFind, saved: viewSaved, apps: viewApps, follow: viewFollow, resume: viewResume, analytics: viewAnalytics, settings: viewSettings, archive: viewArchive, admin: viewAdmin }[S.view] || viewDashboard;
+  const v = { dashboard: viewDashboard, find: viewFind, saved: viewSaved, apps: viewApps, follow: viewFollow, profile: viewProfile, resume: viewResume, analytics: viewAnalytics, settings: viewSettings, archive: viewArchive, admin: viewAdmin }[S.view] || viewDashboard;
   $("#main").replaceChildren(...v());
   if ($("#list")) renderList();
 }

@@ -100,3 +100,4 @@ def to_docx(text: str) -> bytes:
                    '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>')
         z.writestr("word/document.xml", doc)
     return buf.getvalue()
+

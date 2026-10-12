@@ -20,6 +20,14 @@ These changes are uncommitted on top of `4cedc3b`, **not deployed**, with 263 te
 | Workday / SmartRecruiters boards searched with fixed data-role terms | **Fixed.** They use the user's roles. | `test_unsupported_board_is_not_an_error_and_board_terms_follow_user_roles` |
 | Page-level "applications closed" text closed every posting on a multi-job careers page | **Prevented.** It applies only to single-vacancy pages. | `parse_jsonld_postings` |
 
+### LaTeX resume feature: limitations
+
+- **The in-browser PDF engine has a fixed package set.** titlesec, enumitem, marvosym, ragged2e and paracol are missing, so Jake's Resume fails in the browser. The page detects this before compiling and offers Overleaf. Enabling more packages would need a package proxy, i.e. one more server, which is not built.
+- **The engine is third-party and young:** Siglum v0.1.4, MIT-licensed, loaded from jsDelivr and cdn.siglum.org. The first use downloads about 45 MB. Pinned to version 0.1.4.
+- **Open in Overleaf** sends the `.tex` to Overleaf when the user clicks. There is no account connection, because Overleaf has no public write API.
+- **Edit quality depends on the AI.** The guards make edits safe (wording only, no new commands, numbers or file access) but can't make them good. The user approves each one.
+- **Recommendations** only consider tailored versions saved from a job card after this change, because older versions have no role or skill data.
+
 ### New limitations (by design)
 
 - **LinkedIn and Naukri come only from Google search results.** Neither platform has a public job-search API, and both forbid scraping, so their pages are never fetched.

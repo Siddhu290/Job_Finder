@@ -88,6 +88,85 @@ They never make a job Verified.
 - `ats.py` scores a resume against a job description using a separate ATS-style keyword/structure heuristic.
 - `tailor.py` produces tailoring suggestions and a draft, with explicit anti-fabrication guards (rejects invented numbers, requires bullet suggestions to originate from a real bullet, flags unused keywords as "add only if true").
 
+## LaTeX resumes (per-job edits, copy / Overleaf / PDF)
+
+Module: `latex_resume.py`, with routes `/api/tailor` and `/api/resumes`.
+
+**Your own `.tex`.** Upload a `.tex` file or paste the source. It is stored exactly as written, encrypted like every resume version, with `format: "latex"`. The AI profile, ATS score and matching read its plain text (`to_plain`).
+
+**Per-job edits.** `propose_edits` asks the AI for exact find/replace edits to *your* source. `check_edit` keeps an edit only if all of these hold:
+- the text to change occurs exactly once;
+- the replacement adds no LaTeX command, and never one that touches files, runs code or defines macros (`\input`, `\write`, `\def`, `\usepackage`, …);
+- braces stay balanced;
+- it adds no new numbers.
+
+New skills are flagged and left unticked by default. You tick the edits you want.
+
+**What tailoring may touch** (`editable_lines`, enforced in `check_edit` and `check_addition`):
+- **May change:** experience/project bullets, and the summary and skills sections.
+- **Never changes:** the header; education, certification, award and other locked sections; job titles, companies, places, dates; project names; headings. Edits there are rejected even if the AI proposes them.
+- This works for the standard template and for the user's own LaTeX (sections are recognised by their headings).
+- Keyword-only edits may use the job's keywords, the built-in skill list and the skills the user lists themselves.
+
+**New bullets** (at most 4 per job) are allowed only when grounded in the resume, enforced by `check_addition`:
+- each must quote *evidence* copied from the resume;
+- every word must come from that evidence, the bullet it joins, the job's keywords, a list of action verbs or a list of generic nouns;
+- no new numbers and no LaTeX.
+
+It is inserted under an existing bullet using that line's own formatting (`\item`, `\resumeItem{}`, indentation), so the layout is unchanged. New bullets are unticked until the user confirms them. `apply_edits` re-checks every edit on the server before applying it, so the layout never changes.
+
+**My Profile (the standard source for every user's resume).** The dashboard page *My Profile* has fixed fields:
+- personal details and summary;
+- education: school, place, degree, dates, score, details;
+- experience: role, company, place/mode, dates, bullets;
+- projects: name, tech, dates, bullets;
+- skill lines, certifications, achievements and extra sections.
+
+How it works:
+- `clean_profile` validates it, and it is stored encrypted (`_resume_profile`).
+- Saving creates or updates one version, "Resume from my profile" (`resumes.save_profile`), built by `profile_to_details` → `render_details`.
+- *Import from an uploaded resume* maps any saved resume onto these fields (`details_to_profile`) for the user to check.
+- `check_profile` asks for what's missing: email, phone, company, dates, bullets.
+
+**Standard format.** The layout is taken from the owner's own LaTeX template:
+- A4, 11pt, 0.5in/0.45in margins, line spacing 1.05;
+- bold name, small italic tagline, teal links;
+- a rule between sections (`\sectiondivider`) and large bold headings;
+- bold role with the company on the right, and dates below;
+- tech names bold inside bullets (the built-in skill list plus the user's own skills, `own_terms`), and bold certificate names.
+
+Times is used where available (Overleaf), Latin Modern otherwise (in-browser engine). It is plain LaTeX with no titlesec/enumitem.
+
+**Check your details.** After a PDF/DOCX upload or a pasted resume:
+- `parse_details` reads it into structured details: name, tagline, contacts, and sections of entries (title, company/place, second line, dates, bullets), lines and text.
+- `check_details` lists what the user should confirm: missing email/phone/Education/Skills, a company joined to a job title, missing dates.
+- The user corrects everything in the "Check your details" form.
+- `clean_details` validates the input. The details are stored encrypted with the version, and the version's text becomes the corrected text.
+- From then on the template (`render_details`), ATS score, matching and tailoring all use the corrected details. `resumes.tex_for` picks the user's own LaTeX, else the checked details, else the raw text.
+
+**Every resume is tailored the same way.** A PDF/DOCX resume is first placed into the default template from its *original* text: deterministic, no AI. It then gets the same keyword-only edits and grounded new bullets as a LaTeX resume. The older AI "full rewrite" draft is no longer used for tailoring. In a live preview it merged two jobs into one line.
+
+**Plain-text resumes: the default layout for every user without their own `.tex`.** `to_latex` places the text into a fixed template modelled on the owner's sample resume:
+- centred name in capitals, italic tagline, one contact line separated by "•";
+- capitalised section headings, each with a full-width rule;
+- a bold role or school on the left with its date range or place right-aligned;
+- compact bullets in Latin Modern.
+
+It is ATS-friendly:
+- single column, standard headings;
+- `\pdfgentounicode` and `\pdfinterwordspaceon`, so extracted text has real spaces;
+- no hyphenation, left-aligned text.
+
+**One-page fit.** There are five spacing levels (`\def\fitlevel{0..4}`: font size, margins and gaps). `fit_level` estimates the level from the resume's length; that estimate is what Overleaf gets. *PDF in browser* compiles from level 0 upwards and keeps the roomiest level that fits on one page. All of this is plain LaTeX, so it compiles in the browser engine. No AI is involved.
+
+**Getting the result out:**
+- Copy LaTeX.
+- Download `.tex`.
+- **Open in Overleaf:** Overleaf's documented form POST to `https://www.overleaf.com/docs` with `encoded_snip`. This is the only change to the main security policy (`form-action`).
+- **PDF in browser:** `public/pdf.html` with Siglum (TeX Live 2025 in WebAssembly, MIT). It has its **own** security policy allowing only `cdn.jsdelivr.net`, `cdn.siglum.org`, `blob:` and `wasm-unsafe-eval`. It receives the LaTeX by `postMessage` from an app window on the same site and never reads the session. Fetching packages from third-party proxies is switched off, so the engine has a fixed package set. titlesec, enumitem, marvosym, ragged2e and paracol are **not** included, and Jake's Resume uses the first three. `pdf.js` checks the `\usepackage` list against the engine's file list before compiling. If anything is missing, it names the packages and offers Open in Overleaf. The generated template uses plain LaTeX only, so it always compiles in the browser.
+
+**Recommended version.** Saving a tailored version for a job stores that job's role words and skills. For a new job, `resumes.recommend` picks the closest tailored version (60% role words with seniority words ignored, 40% skill overlap, threshold 50%). It shows that version's ATS score for this job next to the selected resume's score. This runs locally, with no AI call.
+
 ## Cross-cutting concerns
 
 - **Config** (`config.py`) validates all required env vars at startup and fails closed with a clear error, never logging values.

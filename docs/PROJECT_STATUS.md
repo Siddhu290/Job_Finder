@@ -14,7 +14,7 @@ No live SerpApi or Groq calls were made, no deployment was done and no scheduler
 
 ## Update 2026-10-12: source-priority discovery
 
-This work is uncommitted on top of `4cedc3b` and **not deployed**. Production behaves exactly as described below until it is reviewed, committed on a branch and deployed with the owner's approval. Tests: **263 passed** (baseline before the work: 238).
+This work is uncommitted on top of `4cedc3b` and **not deployed**. Production behaves exactly as described below until it is reviewed, committed on a branch and deployed with the owner's approval. Tests: **278 passed** (baseline before the work: 238).
 
 What changed:
 - **Discovery is a provider registry**, in priority order and configurable with `DISCOVERY_PROVIDERS`:

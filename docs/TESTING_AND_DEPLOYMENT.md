@@ -7,7 +7,7 @@
 ```bash
 cd /home/sm/crjs/job-finder
 .venv/bin/python -m pytest -q -rs
-# 263 passed in 7.4s  (0 failed, 0 skipped)
+# 278 passed in 8.5s  (0 failed, 0 skipped)
 ```
 
 History of the count:
@@ -100,6 +100,34 @@ No paid calls, no production data, nothing deployed.
 **Bugs found and fixed by this test:**
 - One posting's two LinkedIn URL shapes were listed twice in provenance. Provenance is now deduplicated by source job ID.
 - Needs Review jobs showed "Exp: Not stated" even when the listing stated it. It is now filled from the listing, and on rediscovery the "Not stated" placeholder is replaced; a real value is never overwritten.
+
+## LaTeX resume feature: hands-on test, 2026-10-12
+
+Run on the throwaway local database, in headless Chrome. Only the AI proposal was faked, since there was no Groq key.
+
+**Result: 10 of 10 checks passed:**
+- a pasted `.tex` is saved and tagged LaTeX;
+- 2 proposed edits are shown with checkboxes;
+- only the ticked edit is applied, and the rest of the file is byte-for-byte unchanged;
+- Copy LaTeX fills the clipboard;
+- Download `.tex` works;
+- Open in Overleaf sends `encoded_snip` to overleaf.com/docs (intercepted in the test, so nothing reached Overleaf);
+- a similar job recommends the saved tailored version, with its ATS score;
+- **PDF in browser compiled a real PDF in about 12 s** (Siglum engine, downloaded from its CDN);
+- the downloaded file is a valid PDF;
+- there were no console errors.
+
+**Also checked:**
+- The plain-text template compiles in the browser: a 116 KB PDF.
+- A Jake's-Resume-style `.tex` is identified straight away as needing titlesec, marvosym and enumitem, and Overleaf is offered.
+
+**Bugs found and fixed:**
+- The "Done" status was overwritten by the engine's background format caching.
+- `\begin{center}{\Huge Name}` dropped the name from the plain text.
+- Skill matching for recommendations was case-sensitive.
+- The generated template used packages the browser engine lacks.
+
+New tests: `tests/test_latex_resume.py` (15). They cover the edit guards (injection, new commands, numbers, braces, uniqueness, definitions), the re-check when applying, escaping, upload, plain text and recommendations.
 
 ## Safe local testing
 

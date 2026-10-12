@@ -18,7 +18,9 @@ class handler(BaseHTTPRequestHandler):
         import user_secrets
         body, st = webapi.read_json(self, limit=200_000), webapi.store(self)
         try:
-            text = resumes.get_text(st, str(body["resume_id"])) if body.get("resume_id") else str(body.get("resume_text", ""))
+            text = resumes.plain_text(st, str(body["resume_id"])) if body.get("resume_id") else str(body.get("resume_text", ""))
+            import latex_resume
+            text = latex_resume.to_plain(text) if latex_resume.is_latex(text) else text
         except KeyError:
             return webapi.send(self, 404, {"error": "No such resume"})
         except user_secrets.SecretsError as e:

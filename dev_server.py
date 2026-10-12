@@ -14,8 +14,19 @@ ROOT = Path(__file__).resolve().parent
 PUBLIC = ROOT / "public"
 load_dotenv(ROOT / ".env")
 import json  # noqa: E402
-HEADERS = {h["key"]: h["value"] for h in json.loads((ROOT / "vercel.json").read_text())["headers"][0]["headers"]
-           if h["key"] != "Strict-Transport-Security"}   # same security headers as production (no HSTS on http)
+import re  # noqa: E402
+_HEADER_RULES = [(re.compile("^" + r["source"].replace("/(.*)", "/.*") + "$"), {h["key"]: h["value"] for h in r["headers"]
+                  if h["key"] != "Strict-Transport-Security"}) for r in json.loads((ROOT / "vercel.json").read_text())["headers"]]
+HEADERS = _HEADER_RULES[0][1]       # same security headers as production (no HSTS on http)
+
+
+def headers_for(path: str) -> dict:
+    """Like Vercel: the last matching rule wins (pdf.html has its own policy for the in-browser LaTeX engine)."""
+    out = {}
+    for rx, hs in _HEADER_RULES:
+        if rx.match(path):
+            out.update(hs)
+    return out
 ROUTES = {"jobs", "run", "action", "resume", "login", "application", "settings", "analytics", "tailor", "health",
           "register", "account", "serpapi", "sheet", "keys", "resumes", "ats", "access"}
 
@@ -44,7 +55,7 @@ class Dev(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", (mimetypes.guess_type(f.name)[0] or "text/plain") + "; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
-        for k, v in HEADERS.items():
+        for k, v in headers_for(urlparse(self.path).path).items():
             self.send_header(k, v)
         self.end_headers()
         self.wfile.write(body)

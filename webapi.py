@@ -154,6 +154,16 @@ def prepare_env(tmp=None):
     ensure_credentials(tmp)
 
 
+def job_text(st, job_id: str):
+    """(job title, company, stored description) for one of the user's jobs, or None."""
+    data = st.read("Jobs", "Details")
+    job = next((r for r in data["Jobs"] if r.get("Job ID") == job_id), None)
+    if not job:
+        return None
+    desc = next((d.get("Description", "") for d in data["Details"] if d.get("Job ID") == job_id), "")
+    return job.get("Job Title", ""), job.get("Company", ""), desc
+
+
 def store(h=None):
     """The signed-in user's store (Postgres) or the spreadsheet store (single-user)."""
     from storage import backend
