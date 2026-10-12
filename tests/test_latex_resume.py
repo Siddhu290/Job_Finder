@@ -213,3 +213,60 @@ def test_pdf_text_round_trip_keeps_hyphens_titles_and_wrapped_bullets():
     assert r"\entry{Odoo Python Developer}{Sept 2025 – Present}" in tex                # bracketed dates go right
     assert r"\item Built a data-science-focused dashboard for weekly reporting using Python, SQL and Power BI with the sales team." in tex
     assert r"{MET Institute of Engineering}{Nashik, Maharashtra}" in tex
+
+
+PDF_TEXT = """Siddharth More
+siddharth29m@gmail.com | 9518508756
+EDUCATION
+MET Institute of Engineering Nashik, Maharashtra
+Bachelor of Engineering Aug 2021 – Jul 2025
+EXPERIENCE
+Odoo Python Developer Alligator Infosoft (On-Site)
+Sept 2025 – Present
+• Developed custom ERP modules using Python, XML, and PostgreSQL.
+TECHNICAL SKILLS
+Languages: Python, SQL
+"""
+
+
+def test_details_are_read_checked_and_corrections_drive_the_resume():
+    d = lx.parse_details(PDF_TEXT)
+    assert d["name"] == "Siddharth More" and d["contacts"] == ["siddharth29m@gmail.com", "9518508756"]
+    job = d["sections"][1]["blocks"][0]
+    assert job["title"] == "Odoo Python Developer Alligator Infosoft (On-Site)" and job["sub"] == "Sept 2025 – Present"
+    asks = [i["message"] for i in lx.check_details(d)]
+    assert any("joined to the title" in m for m in asks) and not any("No email" in m for m in asks)
+    # the user splits the company out of the title, moves the dates right, and the resume follows exactly
+    job.update(title="Odoo Python Developer", right="Alligator Infosoft (On-Site)", sub="", sub_right="Sept 2025 – Present")
+    fixed = lx.clean_details(d)
+    assert not any("joined to the title" in i["message"] for i in lx.check_details(fixed))
+    tex = lx.render_details(fixed)
+    assert r"\entry{Odoo Python Developer}{Alligator Infosoft (On-Site)}" in tex and r"\subentry{}{Sept 2025 – Present}" in tex
+    assert "Odoo Python Developer | Alligator Infosoft (On-Site)" in lx.details_to_text(fixed)
+
+
+def test_checks_ask_for_missing_essentials():
+    d = lx.parse_details("Asha\nPune\nPROJECTS\nDashboard\n- Built it\n")
+    asks = " ".join(i["message"] for i in lx.check_details(d))
+    assert "No email" in asks and "No phone" in asks and "No Education" in asks and "No Skills" in asks
+
+
+def test_clean_details_rejects_junk_and_escapes_on_render():
+    with pytest.raises(ValueError):
+        lx.clean_details("not a dict")
+    d = lx.clean_details({"name": "A" * 500, "contacts": ["a@b.co"] * 50, "sections": [{"title": "Skills", "blocks": [
+        {"type": "line", "label": "Hack", "text": r"\input{/etc/passwd} & 100%"}, {"type": "evil", "text": "x"}]}]})
+    assert len(d["name"]) == 80 and len(d["contacts"]) == lx.LIMITS["contacts"] and len(d["sections"][0]["blocks"]) == 1
+    tex = lx.render_details(d)
+    assert r"\textbackslash{}input\{/etc/passwd\} \& 100\%" in tex and tex.count(r"\input{") == 1
+
+
+def test_checked_details_are_stored_encrypted_and_used_for_tailoring(st):
+    v = resumes.save(st, "From PDF", PDF_TEXT + "Extra line so it is long enough for a resume version to be stored.\n", "upload")
+    assert resumes.get_details(st, v["id"]) is None
+    d = lx.parse_details(PDF_TEXT)
+    d["sections"][1]["blocks"][0].update(title="Odoo Python Developer", right="Alligator Infosoft (On-Site)")
+    v2 = resumes.set_details(st, v["id"], lx.clean_details(d))
+    assert v2["checked"] and "Odoo Python Developer" not in str(st.docs[f"_resume_{v['id']}"])     # encrypted at rest
+    assert r"\entry{Odoo Python Developer}{Alligator Infosoft (On-Site)}" in resumes.tex_for(st, v["id"])
+    assert "Odoo Python Developer | Alligator Infosoft (On-Site)" in resumes.plain_text(st, v["id"])  # ATS uses the corrected text

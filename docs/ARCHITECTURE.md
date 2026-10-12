@@ -109,6 +109,13 @@ New skills are flagged and left unticked by default. You tick the edits you want
 
 It is inserted under an existing bullet using that line's own formatting (`\item`, `\resumeItem{}`, indentation), so the layout is unchanged. New bullets are unticked until the user confirms them. `apply_edits` re-checks every edit on the server before applying it, so the layout never changes.
 
+**Check your details.** After a PDF/DOCX upload or a pasted resume:
+- `parse_details` reads it into structured details: name, tagline, contacts, and sections of entries (title, company/place, second line, dates, bullets), lines and text.
+- `check_details` lists what the user should confirm: missing email/phone/Education/Skills, a company joined to a job title, missing dates.
+- The user corrects everything in the "Check your details" form.
+- `clean_details` validates the input. The details are stored encrypted with the version, and the version's text becomes the corrected text.
+- From then on the template (`render_details`), ATS score, matching and tailoring all use the corrected details. `resumes.tex_for` picks the user's own LaTeX, else the checked details, else the raw text.
+
 **Every resume is tailored the same way.** A PDF/DOCX resume is first placed into the default template from its *original* text: deterministic, no AI. It then gets the same keyword-only edits and grounded new bullets as a LaTeX resume. The older AI "full rewrite" draft is no longer used for tailoring. In a live preview it merged two jobs into one line.
 
 **Plain-text resumes: the default layout for every user without their own `.tex`.** `to_latex` places the text into a fixed template modelled on the owner's sample resume:

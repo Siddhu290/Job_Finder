@@ -33,13 +33,19 @@ class handler(BaseHTTPRequestHandler):
             return self.wfile.write(data)
         import latex_resume
         if body.get("action") == "latex":
+            if body.get("resume_id"):              # a saved version: own LaTeX, or the template from the checked details
+                import resumes
+                try:
+                    return webapi.send(self, 200, {"tex": resumes.tex_for(webapi.store(self), str(body["resume_id"]))})
+                except KeyError:
+                    return webapi.send(self, 404, {"error": "No such resume"})
             return webapi.send(self, 200, {"tex": latex_resume.to_latex(str(body.get("text", ""))[:40000])})
         if body.get("action") == "latex_apply":
             tex = str(body.get("tex", ""))
             if body.get("resume_id"):
                 import resumes
                 try:
-                    tex = resumes.get_text(webapi.store(self), str(body["resume_id"]))
+                    tex = resumes.tex_for(webapi.store(self), str(body["resume_id"]))   # checked details if any
                 except KeyError:
                     return webapi.send(self, 404, {"error": "No such resume"})
             if not latex_resume.is_latex(tex):         # a PDF/DOCX resume: the same default template it was shown in
@@ -62,16 +68,17 @@ class handler(BaseHTTPRequestHandler):
                 return webapi.send(self, 404, {"error": "Job not found"})
             job = job or {"Job Title": str(body.get("job_title", ""))[:120], "Company": ""}
             desc = str(body.get("job_text") or "") or next((d.get("Description", "") for d in data["Details"] if d.get("Job ID") == jid), "")
-            text = str(body.get("resume_text", ""))
+            text, tex = str(body.get("resume_text", "")), None
             if body.get("resume_id"):
                 import resumes
                 try:
                     text = resumes.get_text(st, str(body["resume_id"]))
+                    tex = resumes.tex_for(st, str(body["resume_id"]))
                 except KeyError:
                     return webapi.send(self, 404, {"error": "No such resume"})
             # Every resume is tailored the same way: keyword-only edits + grounded new bullets, layout untouched.
             # A PDF/DOCX resume is first placed into the default template (deterministic, no AI rewriting).
-            tex = text if latex_resume.is_latex(text) else latex_resume.to_latex(text)
+            tex = tex or (text if latex_resume.is_latex(text) else latex_resume.to_latex(text))
             if len(latex_resume.to_plain(tex)) >= 200:
                 out = latex_resume.propose_edits(tex, job.get("Job Title", ""), job.get("Company", ""), desc,
                                                  webapi.llm_key(self, st) or None)

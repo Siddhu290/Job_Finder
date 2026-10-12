@@ -2,6 +2,8 @@
 GET                                                   -> {"versions": [{id, name, source, job, created, chars}]}
 POST {"action": "save", "name", "text", "source", "job"} -> new version
 POST {"action": "get" | "delete", "id"}  |  {"action": "rename", "id", "name"}
+POST {"action": "details", "id"} -> details read from the resume (or the user's checked ones) + what to check
+POST {"action": "save_details", "id", "details"} -> validated, stored encrypted; the template is built from them
 POST {"action": "recommend", "job_id" | "job_text"+"job_title", "current_id"} -> closest tailored version for this job (no AI)
 A save with "job_id" remembers that job's role and skills, so the version can be recommended for similar jobs."""
 import os
@@ -41,6 +43,22 @@ class handler(BaseHTTPRequestHandler):
                 return webapi.send(self, 200, v)
             if action == "get":
                 return webapi.send(self, 200, {"id": vid, "text": resumes.get_text(st, vid)})
+            if action == "details":                  # what to show in "Check your details"
+                import latex_resume
+                text = resumes.get_text(st, vid)
+                if latex_resume.is_latex(text):
+                    return webapi.send(self, 400, {"error": "A LaTeX resume keeps its own layout; edit the .tex itself"})
+                d = resumes.get_details(st, vid) or latex_resume.parse_details(text)
+                return webapi.send(self, 200, {"details": d, "issues": latex_resume.check_details(d), "checked": bool(resumes.get_details(st, vid))})
+            if action == "save_details":
+                import latex_resume
+                try:
+                    d = latex_resume.clean_details(body.get("details"))
+                except ValueError as e:
+                    return webapi.send(self, 400, {"error": str(e)})
+                v = resumes.set_details(st, vid, d)
+                webapi.audit(st, "resume", "details checked", detail=v["name"])
+                return webapi.send(self, 200, {"version": v, "details": d, "issues": latex_resume.check_details(d)})
             if action == "recommend":
                 title, desc = str(body.get("job_title", ""))[:120], str(body.get("job_text", ""))[:20000]
                 if body.get("job_id"):

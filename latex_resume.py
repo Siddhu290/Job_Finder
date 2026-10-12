@@ -156,64 +156,206 @@ def _join_wrapped(lines: list) -> list:
     return out
 
 
-def to_latex(text: str) -> str:
-    """Complete .tex document from a plain-text resume, in the default layout: centred name, italic tagline, one
-    contact line, capitalised section headings with a rule, bold entry titles with dates/places on the right,
-    compact bullets. Same words, same order as the text; nothing is rewritten."""
+# ---------------- resume details: read -> user checks/corrects -> template ----------------
+# details = {"name", "tagline", "contacts": [..], "sections": [{"title", "blocks": [block, ..]}]}
+# block = {"type": "entry", "title", "right", "sub", "sub_right", "bullets": [..]}   job / school / project
+#       | {"type": "line", "label", "text", "right"}                                   "Languages: Python, SQL"
+#       | {"type": "text", "text"}  |  {"type": "bullets", "bullets": [..]}
+LIMITS = {"sections": 12, "blocks": 20, "bullets": 15, "contacts": 8, "chars": 400}
+
+
+def parse_details(text: str) -> dict:
+    """Structured details read from a plain-text resume (PDF/DOCX text). A best guess: the user checks it."""
     lines = [l.rstrip() for l in (text or "").splitlines()]
     while lines and not lines[0].strip():
         lines.pop(0)
     first = next((i for i, l in enumerate(lines) if _SECTION.match(l.strip())), len(lines))
-    lines = lines[:first] + _join_wrapped(lines[first:])
     head = [l.strip() for l in lines[:first] if l.strip()]
-    body = [r"\begin{document}"]
-    if head:
-        body += [r"\begin{center}", r"{\Large\bfseries " + tex_escape(head[0].upper()) + r"}\\[2pt]"]
-        tagline = [h for h in head[1:] if not _CONTACT.search(h)]
-        contact = [c.strip() for h in head[1:] if _CONTACT.search(h) for c in re.split(r"\s*[|•·]\s*", h) if c.strip()]
-        if tagline:
-            body.append(r"{\itshape " + tex_escape(" | ".join(tagline)) + r"}\\[2pt]")
-        if contact:
-            body.append(r"{\small " + r" \textbullet{} ".join(_tex_inline(c) for c in contact) + "}")
-        body.append(r"\end{center}")
-        body.append(r"\vspace{-6pt}")
-    in_list, new_entry = False, True
-    rest = lines[first:]
+    d = {"name": head[0] if head else "", "tagline": " | ".join(h for h in head[1:] if not _CONTACT.search(h)),
+         "contacts": [c.strip() for h in head[1:] if _CONTACT.search(h) for c in re.split(r"\s*[|•·]\s*", h) if c.strip()],
+         "sections": []}
+    rest = _join_wrapped(lines[first:])
+    sec, entry, new_entry = None, None, True
     for i, raw in enumerate(rest):
         line = raw.strip()
-        is_bullet = bool(_BULLET.match(raw))
-        if in_list and not is_bullet:
-            body.append(r"\end{bullets}")
-            in_list, new_entry = False, True
         if not line:
-            new_entry = True
+            entry, new_entry = None, True
             continue
         if _SECTION.match(line):
-            body.append(r"\rsec{" + tex_escape(_section_title(line)) + "}")
-            new_entry = True
-        elif is_bullet:
-            if not in_list:
-                body.append(r"\begin{bullets}")
-                in_list = True
-            body.append(r"\item " + _tex_inline(_BULLET.sub("", raw).strip()))
-        else:
-            nxt = next((r for r in rest[i + 1:] if r.strip()), "")
-            label = re.match(r"^([^:|]{2,40}):\s+(.+)$", line)          # "Languages: Python, SQL"
-            left, right = _split_right(line)
-            if label and not right:
-                body.append(r"\textbf{" + tex_escape(label.group(1)) + r":} " + _tex_inline(label.group(2)) + r"\par")
-            elif right:
-                body.append((r"\entry{" if new_entry else r"\subentry{") + _tex_inline(left) + "}{" + _tex_inline(right) + "}")
-            elif new_entry and _looks_like_title(line) and (_BULLET.match(nxt) or _split_right(nxt.strip())[1]
-                                                            or _DATES.fullmatch(nxt.strip())):
-                body.append(r"\etitle{" + _tex_inline(line) + "}")     # entry title above its details
+            sec = {"title": _section_title(line), "blocks": []}
+            d["sections"].append(sec)
+            entry, new_entry = None, True
+            continue
+        if sec is None:
+            sec = {"title": "", "blocks": []}
+            d["sections"].append(sec)
+        blocks = sec["blocks"]
+        if _BULLET.match(raw):
+            item = _BULLET.sub("", raw).strip()
+            if entry is not None and blocks and blocks[-1] is entry:
+                entry["bullets"].append(item)
+            elif blocks and blocks[-1]["type"] == "bullets":
+                blocks[-1]["bullets"].append(item)
             else:
-                body.append(_tex_inline(line) + r"\par")
+                blocks.append({"type": "bullets", "bullets": [item]})
             new_entry = False
-    if in_list:
-        body.append(r"\end{bullets}")
+            continue
+        if blocks and blocks[-1]["type"] in ("entry", "bullets") and blocks[-1].get("bullets"):
+            new_entry = True                       # a non-bullet line after bullets starts something new
+        nxt = next((r for r in rest[i + 1:] if r.strip()), "")
+        label = re.match(r"^([^:|]{2,40}):\s+(.+)$", line)
+        left, right = _split_right(line)
+        open_entry = entry is not None and blocks and blocks[-1] is entry and not entry["bullets"] and not entry["sub"]
+        if label and not right:
+            blocks.append({"type": "line", "label": label.group(1).strip(), "text": label.group(2).strip(), "right": ""})
+            entry = None
+        elif right and new_entry:
+            entry = {"type": "entry", "title": left, "right": right, "sub": "", "sub_right": "", "bullets": []}
+            blocks.append(entry)
+        elif open_entry:
+            entry["sub"], entry["sub_right"] = (left, right) if right else (line, "")
+        elif right:
+            blocks.append({"type": "line", "label": "", "text": left, "right": right})
+        elif new_entry and _looks_like_title(line) and (_BULLET.match(nxt) or _split_right(nxt.strip())[1]
+                                                        or _DATES.fullmatch(nxt.strip())):
+            entry = {"type": "entry", "title": line, "right": "", "sub": "", "sub_right": "", "bullets": []}
+            blocks.append(entry)
+        else:
+            blocks.append({"type": "text", "text": line})
+            entry = None
+        new_entry = False
+    return d
+
+
+def _s(v, n=LIMITS["chars"]) -> str:
+    return " ".join(str(v or "").split())[:n]
+
+
+def clean_details(d) -> dict:
+    """Validated copy of user-edited details (strings only, bounded sizes, known block types)."""
+    if not isinstance(d, dict):
+        raise ValueError("details must be an object")
+    out = {"name": _s(d.get("name"), 80), "tagline": _s(d.get("tagline"), 160),
+           "contacts": [_s(c, 120) for c in (d.get("contacts") or [])[:LIMITS["contacts"]] if _s(c)], "sections": []}
+    for sec in (d.get("sections") or [])[:LIMITS["sections"]]:
+        blocks = []
+        for b in (sec.get("blocks") or [])[:LIMITS["blocks"]] if isinstance(sec, dict) else []:
+            t = b.get("type") if isinstance(b, dict) else None
+            bl = [_s(x) for x in (b.get("bullets") or [])[:LIMITS["bullets"]] if _s(x)] if t in ("entry", "bullets") else []
+            if t == "entry":
+                blocks.append({"type": "entry", "title": _s(b.get("title"), 160), "right": _s(b.get("right"), 80),
+                               "sub": _s(b.get("sub"), 160), "sub_right": _s(b.get("sub_right"), 80), "bullets": bl})
+            elif t == "line":
+                blocks.append({"type": "line", "label": _s(b.get("label"), 60), "text": _s(b.get("text")), "right": _s(b.get("right"), 80)})
+            elif t == "text" and _s(b.get("text"), 1200):
+                blocks.append({"type": "text", "text": _s(b.get("text"), 1200)})
+            elif t == "bullets" and bl:
+                blocks.append({"type": "bullets", "bullets": bl})
+        out["sections"].append({"title": _s(sec.get("title"), 60) if isinstance(sec, dict) else "", "blocks": blocks})
+    return out
+
+
+_EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[A-Za-z]{2,}$")
+_PHONE = re.compile(r"^\+?[\d\s()-]{10,16}$")
+
+
+def check_details(d: dict) -> list:
+    """What to ask the user to confirm or fix: [{"where", "message"}]. Advisory; the user decides."""
+    issues = []
+    if not d.get("name") or len(d["name"].split()) > 5 or _CONTACT.search(d["name"]):
+        issues.append({"where": "name", "message": "Check your name: it should be just your full name."})
+    emails = [c for c in d.get("contacts", []) if "@" in c]
+    if not emails:
+        issues.append({"where": "contacts", "message": "No email found: add your email address."})
+    elif not all(_EMAIL.match(e) for e in emails):
+        issues.append({"where": "contacts", "message": "An email address looks incomplete: check it."})
+    phones = [c for c in d.get("contacts", []) if re.fullmatch(r"[+\d\s()-]{7,}", c)]
+    if not phones:
+        issues.append({"where": "contacts", "message": "No phone number found: add it if you want recruiters to call."})
+    elif not all(_PHONE.match(ph) for ph in phones):
+        issues.append({"where": "contacts", "message": "A phone number looks wrong: use 10 digits, optionally with +91."})
+    titles = {s["title"].lower() for s in d.get("sections", [])}
+    for need in ("education", "skills"):
+        if not any(need in t for t in titles):
+            issues.append({"where": "sections", "message": f"No {need.title()} section found: add it if it's missing."})
+    for si, sec in enumerate(d.get("sections", [])):
+        for bi, b in enumerate(sec["blocks"]):
+            if b["type"] != "entry":
+                continue
+            where = f"sections.{si}.blocks.{bi}"
+            work = re.search(r"experience|intern|education|employment", sec["title"], re.I)
+            has_dates = any(_DATES.search(x or "") for x in (b["right"], b["sub"], b["sub_right"]))
+            if work and not b["right"]:
+                issues.append({"where": where, "message": f"“{b['title'][:70]}”: is the company, school or place joined to the "
+                               "title? Put it in “Company / place” so it shows on the right."})
+            if work and not has_dates:
+                issues.append({"where": where, "message": f"“{b['title'][:70]}”: no dates found. Add them (e.g. Jun 2024 – Aug 2024)."})
+    return issues
+
+
+def details_lines(d: dict) -> list:
+    """The resume as plain lines (for storage, ATS scoring, matching and the one-page estimate)."""
+    out = [d.get("name", "")] + ([d["tagline"]] if d.get("tagline") else []) + ([" | ".join(d["contacts"])] if d.get("contacts") else [])
+    for sec in d.get("sections", []):
+        out.append(sec["title"].upper())
+        for b in sec["blocks"]:
+            if b["type"] == "entry":
+                out.append(" | ".join(x for x in (b["title"], b["right"]) if x))
+                if b["sub"] or b["sub_right"]:
+                    out.append(" | ".join(x for x in (b["sub"], b["sub_right"]) if x))
+                out += ["- " + x for x in b["bullets"]]
+            elif b["type"] == "line":
+                out.append(((b["label"] + ": ") if b["label"] else "") + b["text"] + ((" | " + b["right"]) if b["right"] else ""))
+            elif b["type"] == "text":
+                out.append(b["text"])
+            else:
+                out += ["- " + x for x in b["bullets"]]
+    return [l for l in out if l]
+
+
+def details_to_text(d: dict) -> str:
+    return "\n".join(details_lines(d))
+
+
+def render_details(d: dict) -> str:
+    """The default one-page template filled from (checked) details. Every value is escaped."""
+    body = [r"\begin{document}"]
+    if d.get("name"):
+        body += [r"\begin{center}", r"{\Large\bfseries " + tex_escape(d["name"].upper()) + r"}\\[2pt]"]
+        if d.get("tagline"):
+            body.append(r"{\itshape " + tex_escape(d["tagline"]) + r"}\\[2pt]")
+        if d.get("contacts"):
+            body.append(r"{\small " + r" \textbullet{} ".join(_tex_inline(c) for c in d["contacts"]) + "}")
+        body += [r"\end{center}", r"\vspace{-6pt}"]
+    bullets = lambda items: ([r"\begin{bullets}"] + [r"\item " + _tex_inline(x) for x in items] + [r"\end{bullets}"]) if items else []
+    for sec in d.get("sections", []):
+        if sec["title"]:
+            body.append(r"\rsec{" + tex_escape(sec["title"]) + "}")
+        for b in sec["blocks"]:
+            if b["type"] == "entry":
+                body.append((r"\entry{" + _tex_inline(b["title"]) + "}{" + _tex_inline(b["right"]) + "}") if b["right"]
+                            else r"\etitle{" + _tex_inline(b["title"]) + "}")
+                if b["sub_right"]:
+                    body.append(r"\subentry{" + _tex_inline(b["sub"]) + "}{" + _tex_inline(b["sub_right"]) + "}")
+                elif b["sub"]:
+                    body.append(_tex_inline(b["sub"]) + r"\par")
+                body += bullets(b["bullets"])
+            elif b["type"] == "line":
+                head = (r"\textbf{" + tex_escape(b["label"]) + r":} ") if b["label"] else ""
+                body.append(r"\subentry{" + head + _tex_inline(b["text"]) + "}{" + _tex_inline(b["right"]) + "}" if b["right"]
+                            else head + _tex_inline(b["text"]) + r"\par")
+            elif b["type"] == "text":
+                body.append(_tex_inline(b["text"]) + r"\par")
+            else:
+                body += bullets(b["bullets"])
     body.append(r"\end{document}")
-    return TEX_PREAMBLE.replace("FITLEVEL", str(fit_level(lines))) + "\n" + "\n".join(body) + "\n"
+    return TEX_PREAMBLE.replace("FITLEVEL", str(fit_level(details_lines(d)))) + "\n" + "\n".join(body) + "\n"
+
+
+def to_latex(text: str) -> str:
+    """Complete .tex document from a plain-text resume in the default layout (read details, then render them).
+    Same words, same order as the text; nothing is rewritten."""
+    return render_details(parse_details(text))
 
 
 def fit_level(lines) -> int:

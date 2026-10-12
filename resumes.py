@@ -61,6 +61,44 @@ def get_text(st, vid: str) -> str:
     return user_secrets.decrypt_text((st.get_json(f"_resume_{vid}") or {}).get("text", ""))
 
 
+def get_details(st, vid: str):
+    """The user-checked details of a version (dict), or None if they haven't been checked yet."""
+    import json
+    if not any(v["id"] == vid for v in _index(st)):
+        raise KeyError(vid)
+    enc = (st.get_json(f"_resume_{vid}") or {}).get("details")
+    return json.loads(user_secrets.decrypt_text(enc)) if enc else None
+
+
+def set_details(st, vid: str, details: dict) -> dict:
+    """Store checked details (encrypted); the version's text becomes the details' text, so ATS scores, matching and
+    tailoring all use the corrected resume."""
+    import json
+    import latex_resume
+    versions = _index(st)
+    v = next((x for x in versions if x["id"] == vid), None)
+    if not v:
+        raise KeyError(vid)
+    text = latex_resume.details_to_text(details)[:MAX_CHARS]
+    if len(text) < 100:
+        raise ResumeError("The resume text is too short")
+    st.put_json(f"_resume_{vid}", {"text": user_secrets.encrypt_text(text), "details": user_secrets.encrypt_text(json.dumps(details))})
+    v.update(chars=len(text), format="text", checked=datetime.now().strftime("%Y-%m-%d %H:%M"))
+    st.put_json(INDEX, {"versions": versions})
+    return v
+
+
+def tex_for(st, vid: str) -> str:
+    """The .tex a version is tailored and printed from: the user's own LaTeX, else the default template filled from
+    the checked details, else from the version's text."""
+    import latex_resume
+    t = get_text(st, vid)
+    if latex_resume.is_latex(t):
+        return t
+    d = get_details(st, vid)
+    return latex_resume.render_details(d) if d else latex_resume.to_latex(t)
+
+
 def plain_text(st, vid: str) -> str:
     """Readable text of a version (a LaTeX version is converted), for ATS scoring, matching and the AI profile."""
     import latex_resume
