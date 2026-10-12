@@ -29,6 +29,33 @@ _SECTION_WORD = (r"(?:summary|profile|objective|career objective|experience|inte
                  r"extra[- ]?curricular(?: activities)?|activities|training|courses|coursework|volunteering|leadership|declaration)")
 _SECTION_PREFIX = r"(?:(?:professional|technical|key|academic|work|relevant|selected|personal|other|core|additional)\s+)*"
 _SECTION = re.compile(rf"^{_SECTION_PREFIX}{_SECTION_WORD}(?:\s+(?:and|&)\s+{_SECTION_PREFIX}{_SECTION_WORD})?\s*:?\s*$", re.I)
+def _heading(line: str):
+    """The section-heading match for a line, also when a PDF broke a word with a space ("RELEV ANT PROJECTS")."""
+    line = (line or "").replace(" | ", " ").strip()
+    if len(line) > 60:
+        return None
+    m = _SECTION.match(line)
+    if m or " " not in line:
+        return m
+    spaces = [i for i, ch in enumerate(line) if ch == " "]
+    for i in spaces:
+        m = _SECTION.match(line[:i] + line[i + 1:])
+        if m:
+            return m
+    for a in spaces:
+        for b in spaces:
+            if a < b:
+                m = _SECTION.match(line[:a] + line[a + 1:b] + line[b + 1:])
+                if m:
+                    return m
+    return None
+
+
+def _heading_title(line: str) -> str:
+    m = _heading(line)
+    return _section_title(m.group(0)) if m else _section_title(line)
+
+
 _BULLET = re.compile(r"^\s*(?:[-•*–▪●◦]|\d{1,2}[.)])\s+")
 _LINK = re.compile(r"(?P<mail>[\w.+-]+@[\w-]+(?:\.[\w-]+)+)|(?P<url>(?:https?://|www\.)\S+|(?:linkedin\.com|github\.com)/\S+)")
 TEX_PREAMBLE = r"""\documentclass[a4paper,11pt]{article}
@@ -151,7 +178,7 @@ def _join_wrapped(lines: list) -> list:
     for raw in lines:
         line = raw.strip()
         prev = out[-1].strip() if out else ""
-        joinable = (prev and line and not _BULLET.match(raw) and not _SECTION.match(line) and not _SECTION.match(prev)
+        joinable = (prev and line and not _BULLET.match(raw) and not _heading(line) and not _heading(prev)
                     and (_BULLET.match(out[-1]) or len(prev) > 60)
                     and (line[0].islower() or prev.endswith(_CONTINUES)))
         if joinable:
@@ -174,7 +201,8 @@ def parse_details(text: str) -> dict:
     lines = [l.rstrip() for l in (text or "").splitlines()]
     while lines and not lines[0].strip():
         lines.pop(0)
-    first = next((i for i, l in enumerate(lines) if _SECTION.match(l.strip())), len(lines))
+    lines = [l for l in lines if not re.fullmatch(r"\s*(?:page\s*)?\d{1,2}(?:\s*(?:/|of)\s*\d{1,2})?\s*", l, re.I)]   # page numbers
+    first = next((i for i, l in enumerate(lines) if _heading(l)), len(lines))
     head = [l.strip() for l in lines[:first] if l.strip()]
     d = {"name": head[0] if head else "", "tagline": " | ".join(h for h in head[1:] if not _CONTACT.search(h)),
          "contacts": [c.strip() for h in head[1:] if _CONTACT.search(h) for c in re.split(r"\s*[|•·]\s*", h) if c.strip()],
@@ -186,8 +214,8 @@ def parse_details(text: str) -> dict:
         if not line:
             entry, new_entry = None, True
             continue
-        if _SECTION.match(line):
-            sec = {"title": _section_title(line), "blocks": []}
+        if _heading(line):
+            sec = {"title": _heading_title(line), "blocks": []}
             d["sections"].append(sec)
             entry, new_entry = None, True
             continue
@@ -197,6 +225,13 @@ def parse_details(text: str) -> dict:
         blocks = sec["blocks"]
         if _BULLET.match(raw):
             item = _BULLET.sub("", raw).strip()
+            nxt = next((r for r in rest[i + 1:] if r.strip()), "")
+            if ("project" in sec["title"].lower() and re.search(r"\s[–—-]\s", item) and nxt and not _BULLET.match(nxt)
+                    and not _heading(nxt)):
+                entry = {"type": "entry", "title": item, "right": "", "sub": "", "sub_right": "", "bullets": [], "_desc": True}
+                blocks.append(entry)
+                new_entry = False
+                continue
             if entry is not None and blocks and blocks[-1] is entry:
                 entry["bullets"].append(item)
             elif blocks and blocks[-1]["type"] == "bullets":
@@ -205,10 +240,14 @@ def parse_details(text: str) -> dict:
                 blocks.append({"type": "bullets", "bullets": [item]})
             new_entry = False
             continue
+        if entry is not None and entry.get("_desc") and blocks and blocks[-1] is entry:
+            entry["bullets"].append(line)          # a project's description lines under its "Name – tech" bullet
+            continue
         if blocks and blocks[-1]["type"] in ("entry", "bullets") and blocks[-1].get("bullets"):
             new_entry = True                       # a non-bullet line after bullets starts something new
         nxt = next((r for r in rest[i + 1:] if r.strip()), "")
-        label = re.match(r"^([^:|]{2,40}):\s+(.+)$", line)
+        bare = line[1:-1].strip() if line.startswith("(") and line.endswith(")") else line   # "(Aggregate CGPA: 7.60)"
+        label = re.match(r"^([^:|/()]{2,40}):\s*([^/\s].*)$", bare)        # "ERP Development:Odoo" too
         left, right = _split_right(line)
         open_entry = entry is not None and blocks and blocks[-1] is entry and not entry["bullets"] and not entry["sub"]
         if label and not right:
@@ -229,6 +268,9 @@ def parse_details(text: str) -> dict:
             blocks.append({"type": "text", "text": line})
             entry = None
         new_entry = False
+    for sec in d["sections"]:
+        for b in sec["blocks"]:
+            b.pop("_desc", None)
     return d
 
 
@@ -370,9 +412,23 @@ def render_details(d: dict) -> str:
     def named(item):                      # certifications etc.: the name in bold, the issuer after "–" plain
         parts = re.split(r"\s+[–—-]\s+", item, maxsplit=1)
         return r"\textbf{" + _tex_inline(parts[0]) + "}" + ((" – " + _tex_inline(parts[1])) if len(parts) == 2 else "")
+    def project_item(b):
+        """\\item \\textbf{Name} -- \\textbf{Tech}, \\textbf{Tech} \\\\ description (the standard project format)."""
+        parts = re.split(r"\s+[–—|-]\s+", b["title"], maxsplit=1)
+        head = r"\textbf{" + _tex_inline(parts[0]) + "}"
+        if len(parts) == 2:
+            head += " -- " + ", ".join(r"\textbf{" + _tex_inline(t.strip()) + "}" for t in parts[1].split(",") if t.strip())
+        if b["right"]:
+            head += r" \hfill " + _tex_inline(b["right"])
+        desc = " ".join(b["bullets"])
+        return r"\item " + head + ((r" \\ " + _tex_rich(desc, terms)) if desc else "")
+
     for sec in d.get("sections", []):
         if sec["title"]:
             body.append(r"\rsec{" + tex_escape(sec["title"]) + "}")
+        if "project" in sec["title"].lower() and all(b["type"] == "entry" for b in sec["blocks"]) and sec["blocks"]:
+            body += [r"\begin{bullets}"] + [project_item(b) for b in sec["blocks"]] + [r"\end{bullets}"]
+            continue
         for b in sec["blocks"]:
             if b["type"] == "entry":
                 body.append((r"\entry{" + _tex_inline(b["title"]) + "}{" + _tex_inline(b["right"]) + "}") if b["right"]
@@ -403,7 +459,7 @@ def to_latex(text: str) -> str:
 def fit_level(lines) -> int:
     """Spacing level (0 roomy .. 4 tight) from the resume's estimated height in printed lines (~100 characters per
     line on A4 at 10pt; a section heading takes about two lines)."""
-    est = sum(2 if _SECTION.match(l.strip()) else max(1, -(-len(l.strip()) // 100)) for l in lines if l.strip())
+    est = sum(2 if _heading(l) else max(1, -(-len(l.strip()) // 100)) for l in lines if l.strip())
     return 0 if est <= 56 else 1 if est <= 62 else 2 if est <= 68 else 3 if est <= 76 else 4   # calibrated on real compiles
 
 
@@ -507,7 +563,8 @@ def editable_lines(tex: str) -> list:
         if not started or section is None or _LOCKED_SECTION.search(section):
             continue
         if _ITEM_LINE.search(line) or (_CONTENT_SECTION.search(section) and line.strip() and not line.strip().startswith("%")):
-            out.append(line)
+            # "\item \textbf{Name} -- \textbf{Tech} \\ description": only the description may change
+            out.append(line.split(" \\\\ ", 1)[1] if " \\\\ " in line else line)
     return out
 
 
@@ -572,6 +629,9 @@ def check_addition(tex: str, after: str, text: str, evidence: str, original_plai
         return "LaTeX code isn't allowed in a new bullet"
     if not _bullet_line(tex, after) or not in_content(tex, after):
         return "it must follow an existing experience or project bullet"
+    rest = _bullet_line(tex, after)[2].replace(after, "", 1)
+    if re.sub(r"\\[A-Za-z@]+\*?|[{}\[\]\s]", "", rest):
+        return "it must follow a plain bullet (project descriptions are kept as one paragraph)"
     ev = _norm(to_plain(evidence))
     if len(ev) < 8 or ev not in _norm(original_plain):
         return "its evidence isn't in your resume"
@@ -739,9 +799,14 @@ def profile_to_details(p: dict) -> dict:
     if p.get("summary"):
         secs.append({"title": "Summary", "blocks": [{"type": "text", "text": p["summary"]}]})
     if p.get("education"):
-        secs.append({"title": "Education", "blocks": [entry(e["school"], e["place"], e["degree"], e["dates"],
-                                                            ([f"CGPA / score: {e['score']}"] if e["score"] else []) + e["details"])
-                                                      for e in p["education"]]})
+        edu = []
+        for e in p["education"]:
+            edu.append(entry(e["school"], e["place"], e["degree"], e["dates"]))
+            if e["score"]:
+                edu.append({"type": "line", "label": "Aggregate CGPA" if re.search(r"/\s*10\b", e["score"]) else "Score",
+                            "text": e["score"], "right": ""})
+            edu += [{"type": "text", "text": x} for x in e["details"]]
+        secs.append({"title": "Education", "blocks": edu})
     if p.get("experience"):
         secs.append({"title": "Experience", "blocks": [entry(x["role"], " ".join(filter(None, [x["company"], f"({x['place']})" if x["place"] else ""])),
                                                              "", x["dates"], x["bullets"]) for x in p["experience"]]})

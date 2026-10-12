@@ -69,7 +69,7 @@ def test_plain_text_to_latex_escapes_everything():
                       "- Saved Rs. 2 lakh \\input{/etc/passwd} $x$ ~ ^\n")
     assert r"\href{mailto:asha@example.com}{asha@example.com}" in tex and r"\href{https://github.com/asha_k}{github.com/asha\_k}" in tex
     assert r"\textbf{Languages:} C\# \& SQL, 100\%" in tex and r"\rsec{Skills}" in tex and r"\usepackage{titlesec}" not in tex and r"\usepackage{enumitem}" not in tex
-    assert r"\etitle{BI Dashboard}" in tex and r"\item Saved Rs. 2 lakh \textbackslash{}input\{/etc/passwd\} \$x\$" in tex
+    assert r"\item \textbf{BI Dashboard} \\ Saved Rs. 2 lakh \textbackslash{}input\{/etc/passwd\} \$x\$" in tex   # project format
     assert tex.count(r"\input{") == 1      # only the template's own \input{glyphtounicode}
 
 
@@ -153,7 +153,7 @@ CERTIFICATIONS AND TRAINING
         assert r"\rsec{" + h + "}" in tex
     assert r"\entry{MET Institute of Engineering}{Nashik, Maharashtra}" in tex
     assert r"\subentry{Bachelor of Engineering}{Aug 2021 – Jul 2025}" in tex
-    assert r"\entry{Odoo Python Developer}{Alligator Infosoft (On-Site)}" in tex and r"\etitle{Mood Mate – Python, OpenCV}" in tex
+    assert r"\entry{Odoo Python Developer}{Alligator Infosoft (On-Site)}" in tex and r"\item \textbf{Mood Mate} -- \textbf{Python}, \textbf{OpenCV} \\ Built an emotion-aware chatbot" in tex
     assert not any(p in tex for p in (r"\usepackage{titlesec}", r"\usepackage{enumitem}", r"\usepackage{marvosym}"))
 
 
@@ -291,7 +291,8 @@ def test_profile_renders_the_standard_format():
     assert r"\entry{MET Institute of Engineering}{Nashik, Maharashtra}" in tex
     assert r"\subentry{B.E. AI \& Data Science}{Aug 2021 – Jul 2025}" in tex
     assert r"\entry{Odoo Python Developer}{Alligator Infosoft (On-Site)}" in tex and r"\subentry{}{Sept 2025 – Present}" in tex
-    assert r"\etitle{Mood Mate – Python, OpenCV, Django}" in tex and r"\item Deployed on \textbf{Django} with \textbf{MongoDB}." in tex
+    assert r"\item \textbf{Mood Mate} -- \textbf{Python}, \textbf{OpenCV}, \textbf{Django} \\ Deployed on \textbf{Django} with \textbf{MongoDB}." in tex
+    assert r"\textbf{Aggregate CGPA:} 7.60 / 10.00\par" in tex                       # education score as a plain line
     assert r"\item \textbf{Machine Learning Training} – Symbiosis (2024)" in tex
     assert r"\sectiondivider" in tex and "colorlinks=true" in tex and r"\IfFileExists{ptmr8t.tfm}" in tex
     assert lx.check_profile(p) == []
@@ -338,7 +339,41 @@ def test_tailoring_only_touches_bullets_summary_and_skills():
         assert "only bullets, the summary and skills" in lx.check_edit(tex, find, rep, vocab), find
     # new bullets only under experience/project bullets, never under education or certifications
     vocab_add = lx.keyword_vocab(tex, "Django MongoDB " * 5)
-    assert lx.check_addition(tex, "Deployed on \\textbf{Django} with \\textbf{MongoDB}.", "Developed the Django backend with MongoDB",
-                             "Deployed on Django with MongoDB.", lx.to_plain(tex), vocab_add) == ""
+    exp_bullet = r"Developed custom ERP modules using \textbf{Python}, XML, and \textbf{PostgreSQL}."
+    assert lx.check_addition(tex, exp_bullet, "Built Django modules with PostgreSQL", "Django, Frappe, ERPNext",
+                             lx.to_plain(tex), vocab_add) == ""                         # under an experience bullet: fine
+    assert "plain bullet" in lx.check_addition(tex, r"Deployed on \textbf{Django} with \textbf{MongoDB}.", "Developed the Django backend",
+                                               "Deployed on Django with MongoDB.", lx.to_plain(tex), vocab_add)   # project paragraph
     assert "must follow an existing" in lx.check_addition(tex, r"\textbf{Machine Learning Training}", "Applied Django",
                                                           "Deployed on Django with MongoDB.", lx.to_plain(tex), vocab_add)
+
+
+def test_pdf_layout_gaps_become_left_right_parts():
+    from resume_parser import _split_gaps
+    page = ("   SIDDHARTH   MORE\n"
+            "   MET Institute of Engineering                                          Nashik, Maharashtra\n"
+            "   Odoo  Python  Developer                                               Alligator Infosoft (On-Site)\n"
+            "   Aggregate                  CGPA:  7.60  /  10.00\n"
+            "   TECHNICAL                  SKILLS\n"
+            "   • Developed  custom  ERP  modules\n"
+            "                                    1\n")
+    out = _split_gaps(page).splitlines()
+    assert out[1] == "MET Institute of Engineering | Nashik, Maharashtra"
+    assert out[2] == "Odoo Python Developer | Alligator Infosoft (On-Site)"
+    assert out[3] == "Aggregate CGPA: 7.60 / 10.00"                       # a bold label is not a right-aligned part
+    assert lx._heading(out[4]) and out[-1] == "• Developed custom ERP modules"   # page number "1" dropped
+
+
+def test_pdf_quirks_spaced_headings_page_numbers_colons_projects():
+    text = ("Asha K\nasha@example.com | 9876543210\nEDUCATION\nMET Institute | Nashik, Maharashtra\n(Aggregate CGPA: 7.60 / 10.00)\n"
+            "TECHNICAL SKILLS\nERP Development:Odoo, Frappe\nRELEV ANT PROJECTS\n• Mood Mate – Python, OpenCV\n"
+            "Built an emotion-aware chatbot using OpenCV and sentiment analysis on\nuser text. Deployed on Django.\n2\n")
+    d = lx.parse_details(text)
+    titles = [s["title"] for s in d["sections"]]
+    assert titles == ["Education", "Technical Skills", "Relevant Projects"]
+    edu, skills, proj = (s["blocks"] for s in d["sections"])
+    assert edu[1] == {"type": "line", "label": "Aggregate CGPA", "text": "7.60 / 10.00", "right": ""}
+    assert skills[0]["label"] == "ERP Development" and skills[0]["text"] == "Odoo, Frappe"
+    assert proj[0]["title"] == "Mood Mate – Python, OpenCV" and proj[0]["bullets"] == [
+        "Built an emotion-aware chatbot using OpenCV and sentiment analysis on user text. Deployed on Django."]
+    assert "2" not in lx.details_to_text(d).split("\n")                  # page number not read as content
