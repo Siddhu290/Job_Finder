@@ -1,74 +1,127 @@
 # Testing and Deployment
 
-## Exact test command and result
+**Audit date:** 2026-10-12 · **Commit:** `4cedc3b`, plus uncommitted source-priority work (not deployed)
+
+## Test command and result
 
 ```bash
 cd /home/sm/crjs/job-finder
 .venv/bin/python -m pytest -q -rs
+# 263 passed in 7.4s  (0 failed, 0 skipped)
 ```
 
-**Result: 233 passed, 0 failed, 0 skipped** (at commit `9f4b6b3`).
+History of the count:
+- 233 at `9f4b6b3`;
+- 238 at `4cedc3b` (baseline re-run before this work);
+- 263 now: 24 in `tests/test_sources.py` and 1 Postgres cron integration test.
 
-This is a real, non-trivial test suite — not a thin smoke-test layer:
+Two existing tests were updated to the corrected ranking rule (KNOWN_ISSUES "Update 2026-10-12"). The SerpApi fakes in `test_main.py` and `test_postgres.py` now key on the first Google Jobs query instead of the first call, because providers run in parallel; no assertion was relaxed.
 
-- `tests/test_postgres.py` (15 tests) starts a **real, throwaway local Postgres instance** using local server binaries (`/usr/lib/postgresql/*/bin`), applies the actual Prisma migrations, and connects as a non-superuser `app_rls` role to confirm row-level security actually holds at the database level — not mocked, not skipped on this machine. (If Postgres binaries aren't installed on a given machine, the README states these tests are skipped instead — on this machine they ran for real.)
-- `tests/conftest.py` enforces, for every test in the suite: (1) the real `.env` is never loaded, (2) all real-service env vars (`DATABASE_URL`, `SERPAPI_KEY`, `LLM_API_KEY`, `SESSION_SECRET`, `SECRETS_KEY`, etc.) are scrubbed from the environment, and (3) any socket connection to a non-local address raises immediately. This means the entire suite is provably incapable of reaching a real external service, by construction, not by convention.
+How the suite is isolated:
+- `tests/conftest.py` stops the real `.env` from being loaded and scrubs real-service variables.
+- It also blocks every non-local socket, so the suite cannot reach SerpApi, Groq, Google or Neon.
+- `tests/test_postgres.py` starts a throwaway local Postgres, applies the real Prisma migrations and checks RLS as a non-superuser.
 
-### Per-subsystem test runs performed during this audit
+## Coverage of important workflows
 
-| Command | Result |
-|---|---|
-| `pytest -q tests/test_deduplication.py tests/test_filtering.py tests/test_store_budget.py tests/test_config_http.py` | 89 passed |
-| `pytest -q tests/test_verification.py` | 29 passed |
-| `pytest -q tests/test_postgres.py tests/test_google_sheets.py tests/test_sheet_mirror.py tests/test_isolation_guard.py` | 44 passed |
-| `pytest -q tests/test_vercel.py tests/test_main.py tests/test_lifecycle.py tests/test_resume.py` | 37 passed |
-| `pytest -q tests/test_tailor_auth.py tests/test_resume_library_ats.py tests/test_isolation_guard.py` | 13 passed |
-| `pytest -q tests/test_resume.py tests/test_resume_parser.py tests/test_resume_library_ats.py tests/test_matching.py tests/test_tailor_auth.py` | 36 passed |
-| `pytest -q -rs` (full suite, final) | 233 passed, 0 failed, 0 skipped |
+| Workflow | Direct tests | Gap |
+|---|---|---|
+| Search using a resume | `tests/test_run_route.py::test_resume_args_takes_request`; `tests/test_resume.py` | No end-to-end route test with a real store |
+| Standard search / discovery | `tests/test_main.py`, `tests/test_run_route.py::test_discover_runs_searches_in_parallel` | — |
+| Scheduled (cron) run, multi-user | `tests/test_sources.py::test_cron_*` (fairness, slices, deferral, env restore, auth); `tests/test_postgres.py::test_cron_runs_every_user_with_their_own_key_and_history` (real Postgres) | — |
+| Source providers, caching, pagination, dedupe, provenance, evidence rules, dashboard source info | `tests/test_sources.py` (22) | No live provider test (by rule) |
+| Verification gates | `tests/test_verification.py` (29) | PermissionError path (N4) |
+| Status changes and undo | `tests/test_lifecycle.py` | — |
+| Follow-ups | `test_lifecycle.py::test_followup_buckets_and_no_duplicates` | — |
+| Analytics | `test_lifecycle.py::test_analytics_from_stored_data_only` | — |
+| Resume parsing and AI errors | `tests/test_resume_parser.py`, `tests/test_resume.py` (missing key, model fallback) | Real output quality |
+| Auth and account isolation | `tests/test_postgres.py`, `tests/test_isolation_guard.py`, `tests/test_tailor_auth.py` | — |
+| API routes | `tests/test_vercel.py` | No browser/UI tests |
+| Config validation | `tests/test_config_http.py` | — |
+| Storage failure and recovery | `tests/test_store_budget.py` (stale runs, locks) | — |
 
-### A note on the one failure observed mid-audit
+## Environment variables
 
-Early in this audit, the full suite showed **231 passed, 1 failed** (`tests/test_postgres.py::test_accounts_password_lockout_and_sessions`, expecting the error string `"Wrong email or password"` but getting `"Wrong email/username or password"`). Mid-audit, you landed commit `9f4b6b3`, which added username-based login and updated both `accounts.py`'s message and the test's expectation together. The failure was real but transient — caused by the test lagging one commit behind in-flight work, not a defect. At final HEAD it is fully resolved (233 passed, 0 failed, one new test added).
+Checked by name only; values were not read.
 
-### Gaps in test coverage found
+| Variable | Local `.env` | Needed on Vercel (multi-user) |
+|---|---|---|
+| DATABASE_URL, DATABASE_URL_UNPOOLED | set | yes |
+| SESSION_SECRET (≥ 32 chars) | set | yes |
+| SECRETS_KEY (Fernet) | set | yes |
+| SERPAPI_KEY | set | optional (admin and approved users' fallback) |
+| LLM_API_KEY (Groq) | set | optional (same) |
+| GOOGLE_SHEET_ID, GOOGLE_CREDENTIALS / `_JSON` | set | optional (per-user Sheet tabs) |
+| **CRON_SECRET** | **not set** | **yes, for cron**; Vercel status unknown |
+| DISCOVERY_PROVIDERS, LINKEDIN_QUERIES, NAUKRI_QUERIES, COMPANY_PAGES_PER_RUN, CAREERS_TTL_DAYS, DISCOVERY_CONCURRENCY, SOURCE_TIERS, CRON_TIME_BUDGET, CRON_USER_SECONDS | not set (defaults) | optional, documented in `.env.example` |
+| ALLOW_SIGNUP / INVITE_CODE | not set | sign-up policy |
+| DASHBOARD_PASSWORD | set | single-user mode only |
 
-- No dedicated `test_applications.py` or `test_analytics.py` was found; `applications.py` is likely covered indirectly via `tests/test_lifecycle.py`, but this should be confirmed explicitly rather than assumed.
-- The `routes/run.py` "use my resume" code path has a test (`tests/test_resume.py:121`) that **monkeypatches the broken function it's supposed to test**, so it passes while the real code is broken. This is the single most important finding of the whole audit from a process standpoint: a green test suite did not catch a real, user-facing crash. See `KNOWN_ISSUES.md`.
-- No browser/end-to-end UI test exists for the dashboard; loading states, empty states, and accessibility were not exercised by any automated test.
+**Warning:** the local `.env` points at the **production** Neon database. Any local run of `main.py` writes production data (KNOWN_ISSUES N5).
 
-## Environment requirements
+## Deployment state (evidence)
 
-Two independent modes, controlled by which env vars are set (see `.env.example`, which documents every variable with no secret values):
+| Item | State | Evidence |
+|---|---|---|
+| Vercel production | **Deployed**, `job-finder-obs14.vercel.app` | Owner's Vercel request logs: login, register, run, resume, ats, tailor |
+| Git → Vercel | Pushes to `main` on GitHub `Siddhu290/Job_Finder` auto-deploy | Commits `14fbb18`, `b059d03` and `4cedc3b` appeared live within minutes |
+| Migrations | 0001-0004 applied on Neon | `_prisma_migrations` |
+| Health | `/api/health` reports storage, `data_isolation` and registration | `routes/health.py`; live `rls_status` = enforced |
+| Vercel cron | **Configured, never succeeded** | `vercel.json` (02:30 and 14:30 UTC); 0 cron runs; handler bug N1 |
+| systemd timer | Not installed | `systemctl --user list-timers` has no job-finder timers |
+| Deployment protection | Disabled by the owner (public sign-in page) | Owner's action on 2026-10-09 |
+| Monitoring | Vercel log UI only | No alerting |
 
-### Single-user (Google Sheets) — this repo's current local `.env` is configured this way
-Required: `SERPAPI_KEY`, `GOOGLE_SHEET_ID`, `GOOGLE_CREDENTIALS` (or `GOOGLE_CREDENTIALS_JSON` on Vercel), `DASHBOARD_PASSWORD`.
-Confirmed present in this `.env` (presence only, via `/api/health` output during this audit): `SERPAPI_KEY=true`, `GOOGLE_SHEET_ID=true`, `DASHBOARD_PASSWORD=true`, `SECRETS_KEY=true`.
-Confirmed absent: `DATABASE_URL=false`, `SESSION_SECRET=false`, `LLM_API_KEY=false`.
+## Hands-on test, 2026-10-12
 
-### Multi-user (Neon Postgres)
-Required: `DATABASE_URL` (pooled) and `DATABASE_URL_UNPOOLED` (direct, for migrations), `SESSION_SECRET` (≥32 chars), `SECRETS_KEY` (Fernet key). Optional: `ALLOW_SIGNUP`, `INVITE_CODE`.
-**Not currently configured in this environment.** Multi-user mode is implemented and tested (via the throwaway-Postgres test suite) but not active here.
+No paid calls, no production data, nothing deployed.
 
-### Both modes
-`LLM_API_KEY` (Groq) for resume AI features — **not currently set**, so AI resume extraction/tailoring is Blocked by Configuration in this exact checkout, though the underlying code is implemented. `CRON_SECRET` for scheduled runs — status not independently confirmed in this audit pass.
+**1. Live, read-only, free endpoints** (no SerpApi, no database):
+- The new code parsed 1,318 real postings from 8 curated boards (Greenhouse, Lever, Ashby, Workday) with 0 errors. Workday took 9 s.
+- The careers crawl found Groww's official careers page and the Greenhouse board it links to.
+- 0 jobs were relevant. That's correct: the postings were senior, outside India, or not data roles, e.g. "Principal Data Scientist" and "Senior Finance Data Analyst (Santa Clara)".
 
-## Deployment readiness
+**2. Full search run on a throwaway local Postgres** (real migrations; SerpApi and websites faked; the project was copied without `.env`):
+- All 5 providers ran; 7 candidates became 3 unique jobs.
+- The vacancy seen on Google Jobs, LinkedIn and the employer's careers page became one job, canonical on the employer's board, and Verified.
+- The Naukri-only job stayed Needs Review.
+- A repeat run wrote 0 new rows.
 
-| Aspect | Status |
-|---|---|
-| Deployment config (`vercel.json`: functions, rewrites, CSP/security headers, cron schedule) | Present and correct by inspection |
-| Evidence of an actual live deployment | **None found** — no `.vercel/` directory in this checkout |
-| Scheduler currently active | **Neither** — local systemd timer not installed (`systemctl --user list-timers` → 0 timers); Vercel cron defined in code but no deployment to run on |
-| Secrets never logged/committed | Confirmed — `.env` never in git history; no secret value found in any committed file; `config.py` never logs values |
-| `.env.example` hygiene | One issue — a real-looking `GOOGLE_SHEET_ID` is committed as a non-placeholder value |
+**3. Dashboard in headless Chrome** (Playwright with system Chrome), 14 of 14 checks:
+- 3 cards;
+- "Official company posting" only on the evidence-backed cards;
+- Greenhouse and LinkedIn chips, the verified Apply link to the employer board, and the Employer website link;
+- the Naukri card is not official and its Apply is marked not verified;
+- the Source filter and "Official postings first" work;
+- source chips are reachable by keyboard;
+- no horizontal scroll at 390 px;
+- no console errors.
 
-## Remaining validation before production use
+**Bugs found and fixed by this test:**
+- One posting's two LinkedIn URL shapes were listed twice in provenance. Provenance is now deduplicated by source job ID.
+- Needs Review jobs showed "Exp: Not stated" even when the listing stated it. It is now filled from the listing, and on rediscovery the "Not stated" placeholder is replaced; a real value is never overwritten.
 
-1. Fix the `_resume_args()` bug (see `KNOWN_ISSUES.md`) and re-test the "search using my resume" path for real.
-2. Run one real Groq API call end-to-end (disposable key + one real resume) — currently zero evidence this has ever succeeded.
-3. Run one real SerpApi search via `main.py --dry-run --max-calls 5` against a live key, to confirm the live JSON shape still matches what `discovery/serpapi_search.py` expects.
-4. Deploy once to Vercel and confirm `/api/health` responds correctly in that environment, including (if multi-user) the Postgres RLS status.
-5. Activate exactly one scheduler and confirm one real scheduled run completes and is correctly recorded (not marked "interrupted").
-6. Replace `.env.example`'s real Sheet ID with a placeholder.
+## Safe local testing
 
-None of the above were performed in this audit — per the task's explicit instructions not to trigger live searches, modify production data, enable scheduling, or deploy.
+- Run `pytest` only. It cannot reach the network or the real `.env`.
+- **Don't run `main.py` locally against the current `.env`**: it points at production Neon. To exercise a real run locally, first create a Neon *branch* (or a local Postgres), point `DATABASE_URL` at it in a separate env file, and apply migrations there.
+- No new migration was added by the source-priority work. Career-page cache entries live in the existing `company_cache` table.
+
+## Deploying the source-priority work (needs the owner's approval)
+
+1. Review the diff, then commit on a branch, **not** `main`, which auto-deploys.
+2. Optionally use a Vercel preview deployment of the branch, with Preview env vars that point at a Neon branch, not production.
+3. Merge to `main` to deploy.
+4. Set `CRON_SECRET` on Vercel if it is missing.
+5. Trigger one cron from Vercel → Cron Jobs.
+6. Check the runs: a `cron` row per user (or "deferred"), and per-provider counts in the Vercel log summary.
+
+## Validation still needed before calling it production-ready
+
+1. Fix N1, set `CRON_SECRET`, trigger one cron manually from the Vercel dashboard, and confirm a `cron` row per user.
+2. Rotate exposed credentials (N2).
+3. Clean the phantom run (N5) with the owner's approval.
+4. Observe 5 dashboard runs after `4cedc3b` (≤ 240 s, all `ok`).
+5. Hand-check about 20 Needs Review jobs to plan the verification-yield work (N3).
+
+None of these were done in this audit. Its rules were no deploys, no live API calls and no production writes.

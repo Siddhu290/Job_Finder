@@ -1,6 +1,7 @@
 """HTTP helpers: timeouts, retries with exponential backoff, robots.txt, job-board guard, secret redaction."""
 import logging
 import re
+import threading
 import time
 import urllib.robotparser
 from functools import wraps
@@ -89,12 +90,19 @@ _robots: dict = {}
 _last_hit: dict = {}
 
 
+_polite_lock = threading.Lock()
+POLITE_SECONDS = 1.0
+
+
 def _polite(host):
-    # ponytail: 1 req/sec per host, in-process only
-    wait = 1.0 - (time.monotonic() - _last_hit.get(host, 0))
-    if wait > 0:
-        time.sleep(wait)
-    _last_hit[host] = time.monotonic()
+    """At most one request per POLITE_SECONDS per host, also across discovery threads (slots are reserved under a
+    lock, sleeping happens outside it). ponytail: in-process only; serverless instances don't coordinate."""
+    with _polite_lock:
+        now = time.monotonic()
+        slot = max(now, _last_hit.get(host, 0) + POLITE_SECONDS)
+        _last_hit[host] = slot
+    if slot > now:
+        time.sleep(slot - now)
 
 
 def robots_allowed(url: str) -> bool:

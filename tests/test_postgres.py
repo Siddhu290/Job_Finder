@@ -255,7 +255,8 @@ def test_full_run_on_postgres(db, monkeypatch, tmp_path):
         used_keys.append(self.api_key)
         self.calls += 1
         if p["engine"] == "google_jobs":
-            return GJ if self.calls == 1 else {}
+            first, self.gj_done = not getattr(self, "gj_done", False), True   # first Google Jobs query (searches run in parallel)
+            return GJ if first else {}
         return {"knowledge_graph": ACME_KG} if p["q"] == "Acme Analytics" else {}
     monkeypatch.setattr(main.SerpApi, "search", search)
     web = FakeWeb(pages={HOME: (200, '<a href="/careers">Careers</a>'),
@@ -479,3 +480,53 @@ def test_username_login_and_access_requests(db, monkeypatch):
     assert post(access_route.handler, A, {"action": "deny", "user_id": usr["id"]})[1]["status"] == "denied"
     assert call(keys.handler, U)[1]["serpapi"]["source"] == "none"
     webapi._hits.clear()
+
+
+def test_cron_runs_every_user_with_their_own_key_and_history(db, monkeypatch, tmp_path):
+    """Authorised Vercel cron in multi-user mode: one cron run per user, own key and data, isolation intact."""
+    import config
+    import http_client
+    import main
+    import user_secrets
+    from routes import run
+    from storage.pg import PgJobs, PgStore
+    from tests.test_main import GJ
+    from tests.test_vercel import call
+    from tests.test_verification import ACME_KG, CAREERS, GH_API, GH_JOB, GH_POSTING, HOME, FakeWeb
+    from verification import ats_clients
+    a, b = users(db)
+    keys = {a: "ashakey0123456789abcdef", b: "balakey0123456789abcdef"}
+    for uid, k in keys.items():
+        user_secrets.save_serpapi_key(PgStore(db.conn(), uid), k)
+    monkeypatch.setattr(config, "PROJECT_DIR", tmp_path)
+    for k, v in {"CRON_SECRET": "c" * 32, "JOB_FINDER_DATA_DIR": str(tmp_path), "CACHE_IN_SHEET": "1", "RUN_TIME_LIMIT": "240"}.items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.setattr(main, "STOP", False)
+    monkeypatch.setattr(main.budget, "account", lambda key: {})
+    used = []
+
+    def search(self, **p):
+        used.append(self.api_key)
+        self.calls += 1
+        if p["engine"] == "google_jobs":
+            first, self.gj_done = not getattr(self, "gj_done", False), True
+            return GJ if first else {}
+        return {"knowledge_graph": ACME_KG} if p["q"] == "Acme Analytics" else {}
+    monkeypatch.setattr(main.SerpApi, "search", search)
+    web = FakeWeb(pages={HOME: (200, '<a href="/careers">Careers</a>'),
+                         CAREERS: (200, '<a href="https://boards.greenhouse.io/acmeanalytics">Jobs</a>'), GH_JOB: (200, "Data Analyst")},
+                  api={GH_API: GH_POSTING})
+    monkeypatch.setattr(http_client, "get_page", web.get_page)
+    monkeypatch.setattr(http_client, "get_json", web.get_json)
+    monkeypatch.setattr(http_client, "post_json", web.post_json)
+    ats_clients.fetch_posting.cache_clear()
+
+    code, body = call(run.handler, {"Authorization": "Bearer " + "c" * 32})
+    assert code == 200 and [r["status"] for r in body["runs"]] == ["ok", "ok"]
+    assert set(used) == set(keys.values())                                   # each user's own key, nobody else's
+    for uid in (a, b):
+        runs = PgStore(db.conn(), uid).read("Runs")["Runs"]
+        assert [r["Trigger"] for r in runs] == ["cron"] and runs[0]["Status"] in ("ok", "partial (search time limit)")
+        assert len(PgJobs(db.conn(), uid).read()[1:]) == 1                    # each has exactly their own row
+    assert os.environ["RUN_TIME_LIMIT"] == "240"                              # the slice didn't leak into later requests
+    assert call(run.handler, {"Authorization": "Bearer nope"})[0] == 401

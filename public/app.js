@@ -11,7 +11,7 @@ const store = {
 const readJSON = (k, d) => { try { return JSON.parse(store.get(k)) ?? d } catch { return d } };
 const S = { data: null, view: "dashboard", page: 25, analytics: null, range: "30", profiles: null, tailorJob: null, busy: false,
   f: { q: "", role: "All", loc: "", mode: "All", exp: "All", posted: "All", vstatus: "All", minMatch: 0, company: "", prio: "All",
-       sort: "priority", showHidden: false } };
+       sort: "priority", showHidden: false, source: "All", officialFirst: false } };
 const VIEWS = [["dashboard", "Dashboard"], ["find", "Find Jobs"], ["saved", "Saved Jobs"], ["apps", "Applications"],
   ["follow", "Follow-ups"], ["resume", "Resume Lab"], ["analytics", "Analytics"], ["settings", "Settings"], ["archive", "Archive"],
   ["admin", "Admin"]];
@@ -206,6 +206,16 @@ function contactsBlock(j) {
       group("profile", "Public profiles (unverified leads):"),
       el("div", {}, ext(j.linkedin, "Search HR on LinkedIn ↗", "btn small"), el("span", { class: "muted" }, " Opens LinkedIn's own search; nothing is fetched or sent automatically."))));
 }
+// Source labels: "Official company posting" only from verification evidence (see routes/jobs.py source_info).
+const SOURCE_GROUPS = { "Company / ATS": 1, "Trusted platform": 2, Supplementary: 3 };
+function sourceGroup(j) { return j.official_posting ? 1 : (j.source_tier || 3) }
+function sourceTags(j) {
+  const chips = (j.sources || []).slice(0, 4).map(s => ext(s.url, s.label + " ↗", "tag link", s.tier === 3 ? "Supplementary discovery source" : "Seen here"));
+  return [j.official_posting ? el("span", { class: "tag ok", title: "Exact vacancy found in the employer's own system" }, "Official company posting") : "",
+    j.supplementary ? el("span", { class: "tag warn", title: "Found only on a supplementary source; check it on the employer's site" }, "Supplementary source") : "",
+    ...(chips.length ? chips : [el("span", { class: "tag" }, j.source_label || "source unknown")]),
+    j.checked ? el("span", { class: "tag" }, "Checked " + j.checked.slice(0, 10)) : ""];
+}
 function jobCard(j) {
   const st = stageOf(j), m = j.match, verified = j.apply_kind === "verified";
   const posted = j.posted ? (daysAgo(j.posted) === 0 ? "today" : `${daysAgo(j.posted)}d ago`) : "date unknown";
@@ -229,7 +239,7 @@ function jobCard(j) {
         el("span", { class: "tag " + (j.status === "Verified" ? "ok" : j.status === "Needs Review" ? "warn" : "bad") }, j.status || "Unchecked"),
         isWfh(j) ? el("span", { class: "tag ok" }, "Work from home") : "", j.location ? el("span", { class: "tag acc" }, j.location) : "",
         j.employment ? el("span", { class: "tag" }, j.employment) : "", el("span", { class: "tag" }, "Exp: " + (j.experience || "not stated")),
-        el("span", { class: "tag" }, "Posted " + posted), el("span", { class: "tag" }, (j.source || "").split(" + ").pop() || "source unknown"),
+        el("span", { class: "tag" }, "Posted " + posted), ...sourceTags(j),
         st !== "Discovered" ? el("span", { class: "tag acc" }, st) : "", j.closes ? el("span", { class: "tag warn" }, "Closes " + j.closes) : "",
         el("span", { class: "tag" }, `Priority: ${j.priority}`)),
       detailsBlock, matchBlock(j),
@@ -241,7 +251,9 @@ function jobCard(j) {
         st !== "Not Interested" ? el("button", { class: "btn small danger", onclick() { setApp(j, { Stage: "Not Interested" }, "Marked not interested") } }, "Not interested") : "",
         el("button", { class: "btn small", onclick() { openApp(j) } }, "Track / notes"),
         el("button", { class: "btn small", onclick() { S.tailorJob = j.id; go("resume"); setTimeout(() => { const p = $("#atsPanel"); if (p) p.scrollIntoView({ behavior: "smooth" }) }, 400) } }, "Check ATS fit / tailor"),
-        j.careers && j.careers !== j.apply_link ? ext(j.careers, "Careers page ↗", "btn small link") : ""),
+        j.careers && j.careers !== j.apply_link ? ext(j.careers, "Careers page ↗", "btn small link") : "",
+        j.listing && j.listing !== j.apply_link ? ext(j.listing, "Original posting ↗", "btn small link", "Where this listing was found") : "",
+        j.official_site ? ext(j.official_site, "Employer website ↗", "btn small link", "Official website (verification evidence)") : ""),
       verificationBlock(j), contactsBlock(j)));
 }
 
@@ -289,11 +301,13 @@ function filtered(base) {
     (!minMatch || !S.data.profile || (j.match && j.match.overall >= minMatch)) &&   // no resume yet: no scores to filter on
     (!f.company || j.company.toLowerCase().includes(f.company.toLowerCase())) &&
     (f.prio === "All" || j.priority === f.prio) &&
+    (f.source === "All" || (SOURCE_GROUPS[f.source] ? sourceGroup(j) === SOURCE_GROUPS[f.source] : (j.sources || []).some(s => s.label === f.source))) &&
     (!f.q || `${j.title} ${j.company} ${j.notes}`.toLowerCase().includes(f.q.toLowerCase())));
   const vrank = { Verified: 0, "Needs Review": 1, Closed: 2, Rejected: 3 };
   const sorters = { priority: (a, b) => b.score - a.score, newest: (a, b) => (b.posted || b.found || "").localeCompare(a.posted || a.found || ""),
     match: (a, b) => (b.match ? b.match.overall : -1) - (a.match ? a.match.overall : -1), verification: (a, b) => (vrank[a.status] ?? 9) - (vrank[b.status] ?? 9) || b.score - a.score };
-  return xs.sort(sorters[f.sort] || sorters.priority);
+  const by = sorters[f.sort] || sorters.priority;
+  return xs.sort(f.officialFirst ? (a, b) => (b.official_posting ? 1 : 0) - (a.official_posting ? 1 : 0) || by(a, b) : by);
 }
 function filterBar() {
   const f = S.f;
@@ -307,8 +321,10 @@ function filterBar() {
     sel("vstatus", "Verification", ["All", "Verified", "Needs Review", "Closed", "Rejected"]),
     el("label", { class: "f", title: S.data.profile ? "" : "Upload a resume in Resume Lab to get match scores" }, S.data.profile ? `Match ≥ ${f.minMatch}%` : "Match (add a resume first)", el("input", { type: "range", min: 0, max: 100, step: 10, value: f.minMatch, disabled: !S.data.profile || null, oninput(e) { f.minMatch = e.target.value; e.target.previousSibling.textContent = `Match ≥ ${f.minMatch}%`; S.page = 25; renderList() } })),
     txt("company", "Company", "name"), sel("prio", "Priority", ["All", "High", "Medium", "Low"]),
+    sel("source", "Source", ["All", "Company / ATS", "Trusted platform", "Supplementary", "LinkedIn", "Naukri", "Greenhouse", "Lever", "Ashby", "Workday", "SmartRecruiters"]),
     sel("sort", "Sort by", [["priority", "Priority"], ["newest", "Newest"], ["match", "Highest match"], ["verification", "Verification state"]]),
-    el("label", { class: "chk", style: "align-self:end" }, el("input", { type: "checkbox", checked: f.showHidden || null, onchange(e) { f.showHidden = e.target.checked; renderList() } }), "Show rejected / closed"));
+    el("label", { class: "chk", style: "align-self:end" }, el("input", { type: "checkbox", checked: f.showHidden || null, onchange(e) { f.showHidden = e.target.checked; renderList() } }), "Show rejected / closed"),
+    el("label", { class: "chk", style: "align-self:end" }, el("input", { type: "checkbox", checked: f.officialFirst || null, onchange(e) { f.officialFirst = e.target.checked; renderList() } }), "Official postings first"));
 }
 let listBase = () => [];
 function renderList() {

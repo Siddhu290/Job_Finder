@@ -39,6 +39,30 @@ def apply_link(row) -> dict:
     return {"apply_link": listing or row.get("Official Careers URL", ""), "apply_kind": "portal" if listing else "careers"}
 
 
+def source_info(row, checks) -> dict:
+    """Where the job was seen and what the evidence says about it. "Official company posting" comes only from
+    verification evidence: Verified, or the exact vacancy was matched in the employer's own system."""
+    from discovery import sources as src
+    from http_client import registered_domain
+    listing = row.get("Original Listing URL", "")
+    prov = checks.get("sources") or ([{"label": src.label(listing), "url": listing, "tier": src.tier(listing),
+                                       "id": src.source_id(listing)}] if listing else [])
+    site = checks.get("official_site") or {}
+    official_site = site.get("url", "") if site.get("status") == "pass" else ""
+    dom = registered_domain(official_site) if official_site else ""
+    shown = []
+    for x in prov:
+        x = dict(x)
+        if x["label"] == src.COMPANY and registered_domain(x["url"]) != dom:
+            x["label"] = "Other site (unconfirmed)"     # off the job boards, but not shown to belong to the employer
+        shown.append(x)
+    official = row.get("Verification Status") == "Verified" or (checks.get("vacancy_match") or {}).get("status") == "pass"
+    best = min((x["tier"] for x in shown), default=3)
+    return {"sources": shown, "official_site": official_site, "official_posting": official,
+            "source_tier": best, "supplementary": best >= 3 and not official,
+            "source_label": shown[0]["label"] if shown else src.headline(row.get("Source Platform", ""))}
+
+
 def contacts(row, detail) -> list:
     """Stored contacts with provenance, plus ones the earlier version wrote into Notes."""
     from discovery.hr_search import from_notes
@@ -95,7 +119,7 @@ def build(b: dict, today: date | None = None) -> dict:
             "careers": row.get("Official Careers URL", ""), "apply": row.get("Official Apply URL", "") if row.get("Verification Status") == "Verified" else "",
             "status": row.get("Verification Status", ""), "posted": row.get("Job Posted Date", ""), "found": row.get("Date Found", ""),
             "checked": row.get("Last Checked", ""), "notes": row.get("Notes", ""), "score": pts, "priority": label, "why": why,
-            "preferred": preferred, **apply_link(row),
+            "preferred": preferred, **apply_link(row), **source_info(row, _json(last.get("Checks"), {})),
             "verification": {"checks": _json(last.get("Checks"), {}), "reason": last.get("Reason", ""), "req_id": last.get("Req ID", ""),
                              "last_open_check": next((v.get("Last Open Check") for v in reversed(vs) if v.get("Last Open Check")), ""),
                              "history": [{"time": v.get("Timestamp", ""), "status": v.get("Status", ""), "reason": v.get("Reason", "")[:200]} for v in vs[-6:]],

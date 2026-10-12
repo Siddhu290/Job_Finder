@@ -103,7 +103,8 @@ def world(monkeypatch, tmp_path):
     def search(self, **p):
         self.calls += 1
         if p["engine"] == "google_jobs":
-            return GJ if self.calls == 1 else {}
+            first, self.gj_done = not getattr(self, "gj_done", False), True   # first Google Jobs query (searches run in parallel)
+            return GJ if first else {}
         return {"knowledge_graph": ACME_KG} if p["q"] == "Acme Analytics" else {}
     monkeypatch.setattr(main.SerpApi, "search", search)
 

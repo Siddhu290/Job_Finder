@@ -3,6 +3,7 @@ from collections import Counter
 from datetime import date, timedelta
 
 import applications
+from discovery import sources
 import filters
 
 RANGES = {"7": 7, "30": 30, "90": 90, "all": None}
@@ -65,7 +66,7 @@ def compute(jobs, archive, apps, history, runs, match_scores, today: date, range
         "by_role": dict(Counter(_role(r.get("Job Title")) for r in found).most_common()),
         "by_location": dict(Counter(_where(r) for r in found).most_common(12)),
         "by_employment": dict(Counter((r.get("Employment Type") or "Not stated").split(",")[0] for r in found).most_common(8)),
-        "by_source": dict(Counter(((r.get("Source Platform") or "Unknown").split(" + ")[-1]) for r in found).most_common(10)),
+        "by_source": dict(Counter(sources.headline(r.get("Source Platform", "")) for r in found).most_common(10)),
         "by_posted_week": dict(sorted(weeks.items())),
         "match_distribution": dict(buckets) if match_scores else None,
         "applications": len(applied), "assessments": len(assessed), "interviews": len(interviewed),

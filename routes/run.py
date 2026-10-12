@@ -10,6 +10,7 @@ import io
 import os
 import re
 import sys
+import time
 from http.server import BaseHTTPRequestHandler
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -29,6 +30,42 @@ def run_job(argv):
     summary = out.getvalue()
     print(summary)  # also lands in the Vercel function logs
     return code, summary
+
+
+CRON_BUDGET = 270        # seconds per cron invocation (vercel.json maxDuration is 300)
+CRON_USER_SECONDS = 110  # time slice for one user's search; that run stops and saves within it
+CRON_MIN_SLICE = 60      # don't start a user with less time than this; they go first in the next slot
+
+
+def cron_all_users(users=None, clock=time.monotonic) -> list:
+    """Scheduled search for every enabled user, least recently searched first (backend.active_users), each with
+    their own saved settings, API key, storage (row-level security) and run lock. Users that don't fit in this
+    invocation are deferred and come first in the next slot, because last_run_at only moves when a search runs."""
+    from storage import backend
+    budget = float(os.environ.get("CRON_TIME_BUDGET", CRON_BUDGET))
+    per_user = float(os.environ.get("CRON_USER_SECONDS", CRON_USER_SECONDS))
+    start, out = clock(), []
+    saved = os.environ.get("RUN_TIME_LIMIT")
+    try:
+        for uid in users if users is not None else backend.active_users():
+            left = budget - (clock() - start)
+            tag = uid[:8]                       # never put emails in the cron response or logs
+            if left < CRON_MIN_SLICE:
+                out.append({"user": tag, "status": "deferred to next slot"})
+                continue
+            os.environ["RUN_TIME_LIMIT"] = str(int(min(per_user, left)))
+            try:
+                code, _ = run_job(["--trigger", "cron", "--use-saved-settings", "--user-id", uid])
+                out.append({"user": tag, "status": {0: "ok", 2: "ok with errors", 3: "skipped (another run in progress)"}
+                            .get(code, f"failed (exit {code})")})
+            except Exception as e:  # noqa: BLE001 - one user's failure must not stop the others
+                out.append({"user": tag, "status": f"failed ({type(e).__name__})"})
+    finally:
+        if saved is None:
+            os.environ.pop("RUN_TIME_LIMIT", None)
+        else:
+            os.environ["RUN_TIME_LIMIT"] = saved
+    return out
 
 
 def _resume_args(req):

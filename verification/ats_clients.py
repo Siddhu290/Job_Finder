@@ -120,6 +120,14 @@ def _wd_one(ref):
         evidence=[f"listed on Workday career site '{ref.site}' ({ref.host}), req {info.get('jobReqId')}"])
 
 
+MAX_PAGES = 3                      # per board per run; keeps a run inside the Vercel time limit
+ATS_WITHOUT_API = {"jobvite"}
+
+
+class UnsupportedBoard(ValueError):
+    """The board's ATS has no public API we may use. Not a temporary error: don't retry."""
+
+
 # ---------------- whole board (to find a vacancy discovered elsewhere) ----------------
 def list_board(board: AtsRef, title_hint: str = "") -> list:
     """Postings on a board. Workday/SmartRecruiters are searched by title instead of listed in full."""
@@ -133,20 +141,33 @@ def list_board(board: AtsRef, title_hint: str = "") -> list:
         return [_ashby(j, board.board) for j in _ashby_board(board.board)]
     if board.ats == "smartrecruiters":
         from urllib.parse import quote
-        d = http_client.get_json(f"https://api.smartrecruiters.com/v1/companies/{board.board}/postings?limit=100&q={quote(title_hint)}") or {}
-        return [_sr(j, board.board) for j in d.get("content") or []]
-    if board.ats == "workday" and board.host and board.site:
-        d = http_client.post_json(f"https://{board.host}/wday/cxs/{board.board}/{board.site}/jobs",
-                                  {"appliedFacets": {}, "limit": 20, "offset": 0, "searchText": title_hint},
-                                  check_robots=True) or {}
         out = []
-        for j in d.get("jobPostings") or []:
-            path = (j.get("externalPath") or "").lstrip("/")
-            rid = re.search(r"_([A-Za-z0-9-]+)$", path)
-            out.append(Posting(ats="workday", url=f"https://{board.host}/{board.site}/{path}", title=j.get("title", ""),
-                               location=j.get("locationsText", ""), req_id=rid.group(1) if rid else "", active=True,
-                               evidence=[f"found via Workday career-site search on {board.host}"]))
+        for page in range(MAX_PAGES):          # documented offset pagination, 100 per page
+            d = http_client.get_json(f"https://api.smartrecruiters.com/v1/companies/{board.board}/postings"
+                                     f"?limit=100&offset={100 * page}&q={quote(title_hint)}") or {}
+            batch = d.get("content") or []
+            out += [_sr(j, board.board) for j in batch]
+            if len(batch) < 100 or len(out) >= (d.get("totalFound") or 0):
+                break
         return out
+    if board.ats == "workday" and board.host and board.site:
+        out = []
+        for page in range(MAX_PAGES):          # career-site search pages of 20 (robots.txt honoured)
+            d = http_client.post_json(f"https://{board.host}/wday/cxs/{board.board}/{board.site}/jobs",
+                                      {"appliedFacets": {}, "limit": 20, "offset": 20 * page, "searchText": title_hint},
+                                      check_robots=True) or {}
+            batch = d.get("jobPostings") or []
+            for j in batch:
+                path = (j.get("externalPath") or "").lstrip("/")
+                rid = re.search(r"_([A-Za-z0-9-]+)$", path)
+                out.append(Posting(ats="workday", url=f"https://{board.host}/{board.site}/{path}", title=j.get("title", ""),
+                                   location=j.get("locationsText", ""), req_id=rid.group(1) if rid else "", active=True,
+                                   evidence=[f"found via Workday career-site search on {board.host}"]))
+            if len(batch) < 20 or len(out) >= (d.get("total") or 0):
+                break
+        return out
+    if board.ats in ATS_WITHOUT_API:
+        raise UnsupportedBoard(f"{board.ats} has no public job-board API")
     return []
 
 
@@ -181,8 +202,16 @@ def _ld_location(jp):
 
 
 def parse_jsonld_posting(page_html: str, url: str, today: date | None = None):
-    """Posting from schema.org JobPosting markup. active=True only with a future validThrough."""
+    """First Posting from schema.org JobPosting markup on a single vacancy page. active=True only with a future validThrough."""
+    found = parse_jsonld_postings(page_html, url, today)
+    return found[0] if found else None
+
+
+def parse_jsonld_postings(page_html: str, url: str, today: date | None = None) -> list:
+    """Every schema.org JobPosting on a page (a careers page may list several). The posting's own "url"
+    is used only when it is on the same site as the page; otherwise the page URL is kept."""
     today = today or date.today()
+    out = []
     for block in re.findall(r'(?is)<script[^>]+application/ld\+json[^>]*>(.*?)</script>', page_html or ""):
         try:
             data = json.loads(block.strip())
@@ -196,24 +225,26 @@ def parse_jsonld_posting(page_html: str, url: str, today: date | None = None):
             ident = jp.get("identifier")
             ident = ident.get("value", "") if isinstance(ident, dict) else (ident or "")
             org = jp.get("hiringOrganization") or {}
-            closed = bool(CLOSED_MARKERS.search(http_client.html_to_text(page_html)))
             if valid is None:
                 active, ev = None, "JobPosting markup has no validThrough date"
             elif valid < today:
                 active, ev = False, f"JobPosting validThrough {valid} has passed"
             else:
                 active, ev = True, f"JobPosting markup valid through {valid}"
-            if closed:
-                active, ev = False, "page states the vacancy is closed"
             emp = jp.get("employmentType", "")
-            return Posting(
-                ats="official-site", url=url, title=str(jp.get("title", "")).strip(), location=_ld_location(jp),
+            own = str(jp.get("url") or "")
+            own = own if own.startswith("http") and http_client.registered_domain(own) == http_client.registered_domain(url) else url
+            out.append(Posting(
+                ats="official-site", url=own, title=str(jp.get("title", "")).strip(), location=_ld_location(jp),
                 description=_text(jp.get("description")), req_id=str(ident), posted_date=parse_posted(jp.get("datePosted")),
                 employment_type=", ".join(emp) if isinstance(emp, list) else emp,
                 company=org.get("name", "") if isinstance(org, dict) else "",
                 remote=jp.get("jobLocationType") == "TELECOMMUTE", active=active, evidence=[ev],
-                valid_through=valid.isoformat() if valid else "")
-    return None
+                valid_through=valid.isoformat() if valid else ""))
+    # "applications closed" in the page text describes the vacancy only on a single-vacancy page
+    if len(out) == 1 and CLOSED_MARKERS.search(http_client.html_to_text(page_html)):
+        out[0].active, out[0].evidence = False, ["page states the vacancy is closed"]
+    return out
 
 
 def fetch_official_page_posting(url: str):

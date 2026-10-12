@@ -75,6 +75,7 @@ label.chk{display:inline-flex;gap:6px;align-items:center;font-size:13.5px;color:
 .tag.warn{color:var(--warn);background:var(--warn-soft);border-color:transparent}
 .tag.bad{color:var(--bad);background:var(--bad-soft);border-color:transparent}
 .tag.acc{color:var(--accent);background:var(--accent-soft);border-color:transparent}
+a.tag.link{color:var(--accent);text-decoration:none}a.tag.link:hover,a.tag.link:focus-visible{text-decoration:underline}
 .list{display:flex;flex-direction:column;gap:12px}
 .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:16px 18px;box-shadow:var(--shadow);display:grid;grid-template-columns:70px 1fr;gap:16px}
 .card.dim{opacity:.7}
